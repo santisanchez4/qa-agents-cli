@@ -9,6 +9,7 @@ import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
 import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
 import { RunSummary, FailedTest, LatestRunData, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
 import { FailureClassification, cleanMojibake, classifyFailure } from '../core/failureAnalyzer';
+import { buildRunCommand } from '../core/testRunner';
 
 function saveProjectProfile(rootPath: string, analysis: ProjectScanResult): void {
   const qaDir = path.join(rootPath, '.qa-agents');
@@ -818,20 +819,6 @@ function buildDiscoverReport(targetPath: string, profile: ProjectScanResult | nu
 }
 
 
-function buildRunCommand(
-  testCommand: string,
-  relativeTestFile: string
-): { cmd: string; spawnArgs: string[]; display: string } {
-  const parts = testCommand.trim().split(/\s+/);
-  const isNpmRun = parts.length >= 2 && parts[0] === 'npm' && parts[1] === 'run';
-  const spawnArgs = isNpmRun
-    ? [...parts.slice(1), '--', relativeTestFile]
-    : [...parts.slice(1), relativeTestFile];
-  const display = isNpmRun
-    ? `${testCommand} -- ${relativeTestFile}`
-    : `${testCommand} ${relativeTestFile}`;
-  return { cmd: parts[0], spawnArgs, display };
-}
 
 const args = process.argv.slice(2);
 const command = args[0];
