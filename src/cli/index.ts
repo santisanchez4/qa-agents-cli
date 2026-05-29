@@ -8,6 +8,7 @@ import { printHelp } from './help';
 import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
 import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
 import { buildRepoRulesTemplate } from '../core/repoRulesTemplate';
+import { buildAiConfigReport } from '../core/aiConfigReport';
 import { RunSummary, FailedTest, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
 import { FailureClassification, cleanMojibake, classifyFailure, buildRetryContextLines } from '../core/failureAnalyzer';
 import { buildRunReport } from '../core/reportGenerator';
@@ -989,6 +990,9 @@ if (command === 'analyze') {
 
   const reportLines = buildRunReport(runData);
   console.log('\n' + reportLines.join('\n'));
+} else if (command === 'ai-config') {
+  const configLines = buildAiConfigReport();
+  console.log('\n' + configLines.join('\n'));
 } else if (command === 'ai-review') {
   const fileFlagIndex = args.indexOf('--file');
   const relativeTestFile = fileFlagIndex !== -1 ? args[fileFlagIndex + 1] : undefined;

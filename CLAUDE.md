@@ -875,9 +875,44 @@ If `QA_AGENTS_AI_PROVIDER` is unset or the matching API key is missing, the disa
 
 ---
 
+## Step 34 — init-rules command (completed)
+
+Added `init-rules <path>` command that creates a generic `repo-rules.md` template at `<repo>/.qa-agents/repo-rules.md`.
+
+New module: `src/core/repoRulesTemplate.ts` — exports `buildRepoRulesTemplate(): string`.
+
+Behavior:
+- Creates `.qa-agents/` if it does not exist.
+- If `repo-rules.md` already exists, prints a notice and exits without overwriting.
+- The template contains eight sections with examples (Project context, Test organization, Selector strategy, Environment variables, Test data rules, Critical flows, Stability rules, Do not do, Notes for AI reviewer).
+- No project-specific content. Fully generic.
+
+---
+
+## Step 35 — ai-config diagnostics command (completed)
+
+Added `ai-config [path]` command for safe, read-only AI provider diagnostics.
+
+New module: `src/core/aiConfigReport.ts` — exports `buildAiConfigReport(): string[]`.
+
+Output sections:
+- **Provider** — Requested, Resolved, Status, Model, API key (SET/MISSING — never the value).
+- **Required env vars** — `QA_AGENTS_AI_PROVIDER` and the provider-specific key.
+- **Security checks** — warns if `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+- **Notes** — reminds that `--ai` is opt-in and deterministic review always works.
+
+Cases handled:
+- No `QA_AGENTS_AI_PROVIDER` → Resolved: disabled, all vars MISSING.
+- Unsupported provider → Resolved: disabled, prints "Unsupported provider" note.
+- Supported provider, key missing → Resolved: disabled, shows which key is MISSING.
+- Supported provider, key set → Resolved: \<provider\>, shows model (env override or default).
+
+Does not call any external API. Does not print API key values.
+
+---
+
 ## Next planned feature
 
 To be determined based on usage feedback from `ai-review --ai`.
-- Call `provider.review({ prompt, relativeFilePath, framework })`.
 - Parse `AiReviewResponse.additionalFindings` from the response.
 - Append them to the report after the deterministic findings section.
