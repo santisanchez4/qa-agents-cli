@@ -13,6 +13,7 @@ import { buildRunReport } from '../core/reportGenerator';
 import { buildRunCommand } from '../core/testRunner';
 import { ExistingPatterns, AutomationPlanResult, collectSpecFiles, buildAutomationPlan, buildTestCode, buildDeterministicTestDraft } from '../core/testGeneration';
 import { detectRelatedTests } from '../core/duplicateDetection';
+import { ReviewContext, runAiReview, buildAiReviewReport } from '../agents/automationReviewerAgent';
 
 function saveProjectProfile(rootPath: string, analysis: ProjectScanResult): void {
   const qaDir = path.join(rootPath, '.qa-agents');
@@ -973,6 +974,53 @@ if (command === 'analyze') {
 
   const reportLines = buildRunReport(runData);
   console.log('\n' + reportLines.join('\n'));
+} else if (command === 'ai-review') {
+  const fileFlagIndex = args.indexOf('--file');
+  const relativeTestFile = fileFlagIndex !== -1 ? args[fileFlagIndex + 1] : undefined;
+
+  if (!relativeTestFile) {
+    console.error('Missing --file argument. Provide a test file path relative to the target repo.');
+    process.exit(1);
+  }
+
+  const absoluteTestFile = path.join(targetPath, relativeTestFile);
+  if (!fs.existsSync(absoluteTestFile)) {
+    console.error(`Test file not found:\n${absoluteTestFile}`);
+    process.exit(1);
+  }
+
+  const profilePath = path.join(targetPath, '.qa-agents', 'project-profile.json');
+  const profileRaw = readFileIfExists(profilePath);
+  if (!profileRaw) {
+    console.error('Missing project profile. Run analyze --save first.');
+    process.exit(1);
+  }
+
+  const profile: ProjectScanResult = JSON.parse(profileRaw);
+  const repoRules = readFileIfExists(path.join(targetPath, '.qa-agents', 'repo-rules.md'));
+  const executionConfig = readFileIfExists(path.join(targetPath, '.qa-agents', 'execution-config.json'));
+  const fileContent = fs.readFileSync(absoluteTestFile, 'utf-8');
+
+  let latestRun: LatestRunData | null = null;
+  const runResultRaw = readFileIfExists(path.join(targetPath, '.qa-agents', 'runs', 'latest-run.json'));
+  if (runResultRaw) {
+    try { latestRun = JSON.parse(runResultRaw) as LatestRunData; } catch { /* ignore malformed */ }
+  }
+
+  const reviewContext: ReviewContext = {
+    targetRepo: targetPath,
+    relativeFilePath: relativeTestFile.replace(/\\/g, '/'),
+    fileContent,
+    framework: (profile.detectedFrameworks ?? []).join(', ') || '(none detected)',
+    testCommand: profile.testCommand ?? '(none)',
+    repoRules,
+    executionConfig,
+    latestRun,
+  };
+
+  const reviewResult = runAiReview(reviewContext);
+  const reviewLines = buildAiReviewReport(reviewContext, reviewResult);
+  console.log('\n' + reviewLines.join('\n'));
 } else {
   printHelp();
 }

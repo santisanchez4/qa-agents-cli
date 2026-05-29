@@ -793,20 +793,15 @@ Split incrementally, one command at a time.
 
 ## Next planned feature
 
-**Step 30 — AI Automation Reviewer Agent**
+**Step 31 — AI-assisted review layer**
 
-Purpose: review an existing `.spec.ts` file and produce a structured quality assessment.
+Purpose: add an optional AI-assisted review layer on top of the existing deterministic reviewer engine.
 
-Candidate command:
+The deterministic engine (`src/core/aiReviewer.ts`) remains the safe, always-on base. A future AI provider will enhance its output with deeper analysis — it will not replace the deterministic checks.
 
-```bash
-npm run dev -- review <target-repo> --file <spec-file>
-```
+Candidate behavior:
+- The deterministic review runs first and always produces findings.
+- If an AI provider is configured, a second pass enriches findings with natural-language reasoning, coverage gap analysis, and spec-aware suggestions.
+- The `Review mode:` section in the report will reflect which layers are active.
 
-Expected output:
-- Test structure quality (describes, befores, assertions).
-- Missing coverage areas based on spec title.
-- Locator quality (role-based vs fragile selectors).
-- Suggested improvements.
-- Does not modify files.
-- Does not run tests.
+The `ai-review` command will remain read-only regardless of which layers are active.

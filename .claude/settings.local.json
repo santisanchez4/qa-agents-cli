@@ -4,7 +4,8 @@
       "Bash(npx tsc *)",
       "Bash(node test-parse.mjs)",
       "Bash(node -e \"console.log\\(require\\('./node_modules/typescript/package.json'\\).version\\)\")",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(Remove-Item *)"
     ]
   }
 }
