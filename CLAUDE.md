@@ -19,7 +19,9 @@ Target repositories provide local context through:
 ```txt
 <target-repo>/.qa-agents/project-profile.json
 <target-repo>/.qa-agents/repo-rules.md
+<target-repo>/.qa-agents/execution-config.json
 <target-repo>/.qa-agents/specs/
+<target-repo>/.qa-agents/runs/
 ```
 
 Any behavior discovered during lab testing must be generalized before being added to the CLI logic. If it only makes sense for one project, it belongs in that project's `.qa-agents/` files — not here.
@@ -28,9 +30,7 @@ Any behavior discovered during lab testing must be generalized before being adde
 
 ## Lab projects
 
-`warzone-ui` is currently used only to validate the CLI against a real project.
-
-It is a laboratory, not a first-class target. The CLI must work equally well against any repo with a compatible structure.
+`warzone-ui` is used only to validate the CLI against a real project. It is a laboratory, not a built-in or default target. The CLI must work equally well against any repo with a compatible structure.
 
 Warzone-specific rules live exclusively in:
 
@@ -39,6 +39,20 @@ C:\Repos\warzone-ui\.qa-agents\repo-rules.md
 ```
 
 They must never be copied or replicated into `qa-agents-cli` source code.
+
+---
+
+## Target repo `.qa-agents` structure
+
+```txt
+.qa-agents/
+  project-profile.json      # Created by: analyze --save
+  repo-rules.md             # Maintained manually in the target repo
+  execution-config.json     # Created by: init-config
+  specs/                    # Spec files maintained in the target repo
+  runs/
+    latest-run.json         # Written by: run
+```
 
 ---
 
@@ -134,27 +148,59 @@ Both --dry-run and --write were provided. Running in dry-run mode only.
 
 No files are written.
 
+### Inspect suite
+
+```bash
+npm run dev -- inspect <target-repo>
+```
+
+See [Suite inspection](#suite-inspection).
+
+### Initialize execution config
+
+```bash
+npm run dev -- init-config <target-repo>
+```
+
+See [Execution config](#execution-config).
+
+### Check environment variables
+
+```bash
+npm run dev -- env-check <target-repo> --env <env> --target <target> [--vars-file <file>]
+```
+
+See [Environment check](#environment-check).
+
+### Discover environments
+
+```bash
+npm run dev -- discover-envs <target-repo>
+```
+
+See [Environment discovery](#environment-discovery).
+
 ### Run a specific test file
 
 ```bash
-npm run dev -- run <target-repo> --file <test-file>
+npm run dev -- run <target-repo> --file <test-file> [--env <env>] [--target <target>] [--vars-file <file>]
 ```
 
-Loads the project profile, detects the test command, and runs the specified test file from inside the target repo.
-
-For `npm run` commands:
+### Run the full suite
 
 ```bash
-npm run test:e2e -- <test-file>
+npm run dev -- run <target-repo> --suite [--env <env>] [--target <target>] [--vars-file <file>]
 ```
 
-For direct commands:
+See [Run command behavior](#run-command-behavior).
+
+### Analyze failures
 
 ```bash
-npx playwright test <test-file>
+npm run dev -- analyze-failures <target-repo>
 ```
 
-Streams stdout/stderr directly. Exits with the same code as the test process.
+See [Failure analysis](#failure-analysis).
 
 ---
 
@@ -165,16 +211,26 @@ Streams stdout/stderr directly. Exits with the same code as the test process.
 ```bash
 npm run dev -- analyze C:\Repos\warzone-ui --save
 
+npm run dev -- inspect C:\Repos\warzone-ui
+
+npm run dev -- init-config C:\Repos\warzone-ui
+
+npm run dev -- discover-envs C:\Repos\warzone-ui
+
+npm run dev -- env-check C:\Repos\warzone-ui --env staging --target chromium
+
 npm run dev -- generate C:\Repos\warzone-ui --spec .qa-agents/specs/login-smoke.md --dry-run
 
 npm run dev -- generate C:\Repos\warzone-ui --spec .qa-agents/specs/login-smoke.md --write
 
-npm run dev -- run C:\Repos\warzone-ui --file tests/e2e/auth/login.spec.ts
+npm run dev -- run C:\Repos\warzone-ui --file tests/e2e/auth/login.spec.ts --env staging --target chromium
+
+npm run dev -- run C:\Repos\warzone-ui --suite --env staging --target chromium
+
+npm run dev -- analyze-failures C:\Repos\warzone-ui
 ```
 
-> **Important:** Do not run qa-agents commands from inside the target repo using that repo's own `npm run dev`. For warzone-ui, `npm run dev` starts Next.js.
->
-> Always run from the `qa-agents-cli` directory:
+> **Important:** Do not run qa-agents commands from inside the target repo using that repo's own `npm run dev`. Always run from the `qa-agents-cli` directory:
 >
 > ```bash
 > cd C:\Users\Santiago\qa-agents-cli
@@ -186,13 +242,19 @@ npm run dev -- run C:\Repos\warzone-ui --file tests/e2e/auth/login.spec.ts
 ## Current implemented behavior
 
 ```txt
-analyze
-analyze --save
-generate --spec
-generate --spec --dry-run
-generate --spec --write
-generate --spec --write --force
-run --file
+analyze [path]
+analyze [path] --save
+generate [path] --spec <file>
+generate [path] --spec <file> --dry-run
+generate [path] --spec <file> --write
+generate [path] --spec <file> --write --force
+inspect [path]
+init-config [path]
+env-check [path] --env <env> --target <target> [--vars-file <file>]
+discover-envs [path]
+run [path] --file <file> [--env <env>] [--target <target>] [--vars-file <file>]
+run [path] --suite [--env <env>] [--target <target>] [--vars-file <file>]
+analyze-failures [path]
 ```
 
 ---
@@ -226,6 +288,92 @@ structure: {
 ```
 
 The scanner must stay fully generic.
+
+---
+
+## Suite inspection
+
+The `inspect` command provides an overview of the test suite in a target repo.
+
+```bash
+npm run dev -- inspect <target-repo>
+```
+
+It:
+
+- Loads the project profile (`project-profile.json`).
+- Counts total spec files.
+- Groups tests by folder to show distribution across feature areas.
+- Detects support folders (fixtures, helpers, utils, setup).
+- Detects available execution modes from package scripts (e.g., headed, headless, specific browsers).
+- Recommends next commands based on what is already configured.
+
+Does not modify any files.
+
+---
+
+## Execution config
+
+The `init-config` command initializes the execution configuration for a target repo.
+
+```bash
+npm run dev -- init-config <target-repo>
+```
+
+It:
+
+- Creates `.qa-agents/execution-config.json` in the target repo.
+- Uses detected package scripts to populate available targets and test commands.
+- Creates starter environments (e.g., `staging`, `production`) and targets (e.g., `chromium`, `firefox`).
+- Does **not** overwrite an existing `execution-config.json`.
+
+The generated config is a starting point. Environments, targets, required variables, and commands should be adjusted manually to match the project.
+
+---
+
+## Environment check
+
+```bash
+npm run dev -- env-check <target-repo> --env <env> --target <target> [--vars-file <file>]
+```
+
+It:
+
+- Loads `project-profile.json`.
+- Loads `execution-config.json`.
+- Validates that the selected `--env` exists in the config.
+- Validates that the selected `--target` exists in the config.
+- Loads variables from `--vars-file` if provided, otherwise auto-loads from the target repo in this order:
+  1. `.env.<env>`
+  2. `.env.<env>.local`
+  3. `.env.local`
+  4. `.env`
+- Never prints secret values — prints `SET` or `MISSING` only.
+- Exits non-zero when required variables are missing.
+
+> **Flag note:** Use `--vars-file`, not `--env-file`. The flag `--env-file` can conflict with Node/tsx argument handling.
+
+---
+
+## Environment discovery
+
+```bash
+npm run dev -- discover-envs <target-repo>
+```
+
+It:
+
+- Detects `.env*` files in the target repo.
+- Parses variable keys only — never reads or prints values.
+- Infers possible environments from env file names, URL patterns, variable names, and package scripts.
+- Groups variables by category:
+  - App / URL variables
+  - User credentials
+  - Admin credentials
+  - Cloud execution variables
+  - Secrets / API keys
+- Detects execution targets.
+- Does not modify any config files.
 
 ---
 
@@ -272,13 +420,13 @@ Inspect feature folders inside `tests/e2e` to find the best match for the spec.
 The CLI uses generic keyword matching to map spec titles to existing feature folders:
 
 ```txt
-login / sign-in  -> auth, login
+login / sign-in    -> auth, login
 register / sign-up -> auth, register, registration
-tournament       -> tournament, tournaments
-team             -> team, teams
-wallet           -> wallet
-admin            -> admin
-support          -> support
+tournament         -> tournament, tournaments
+team               -> team, teams
+wallet             -> wallet
+admin              -> admin
+support            -> support
 ```
 
 If no folder matches, suggest a kebab-case folder derived from the spec title.
@@ -387,14 +535,201 @@ test.describe('login smoke', () => {
 
 ## Run command behavior
 
-The `run` command:
+The `run` command supports running a single test file or the full suite, with optional environment and target selection.
 
-1. Loads `<target-repo>/.qa-agents/project-profile.json`
-2. Validates the test file exists on disk
-3. Reads `testCommand` from the profile
-4. Inserts `--` before the file path for `npm run` commands
-5. Runs via `spawnSync` with `shell: true` and `cwd` set to the target repo
-6. Streams stdout/stderr directly (`stdio: 'inherit'`)
-7. Exits with the child process's exit code
+```bash
+npm run dev -- run <target-repo> --file <test-file> [--env <env>] [--target <target>] [--vars-file <file>]
 
-Self-healing is not implemented yet and must come later, after the runner is stable.
+npm run dev -- run <target-repo> --suite [--env <env>] [--target <target>] [--vars-file <file>]
+```
+
+Behavior:
+
+1. Loads `project-profile.json`.
+2. If `execution-config.json` exists:
+   - Validates the selected `--env` and `--target` against the config.
+   - Loads env vars from `--vars-file` or auto-loads from `.env.<env>`, `.env.<env>.local`, `.env.local`, `.env`.
+   - Validates required variables for the selected environment.
+   - Uses the test command configured for the selected target.
+   - Passes env vars into the spawned test process.
+3. If `execution-config.json` does not exist:
+   - Falls back to the `testCommand` from the project profile.
+4. For `--file`: appends the specific test file to the command.
+5. For `--suite`: runs the full suite without appending a file path.
+6. Captures stdout/stderr, prints them, and saves run data to `.qa-agents/runs/latest-run.json`.
+7. Exits with the child process's exit code.
+
+For `npm run` commands, inserts `--` before the file path:
+
+```bash
+npm run test:e2e -- <test-file>
+```
+
+For direct commands:
+
+```bash
+npx playwright test <test-file>
+```
+
+---
+
+## Latest run results
+
+Every `run` command writes results to:
+
+```txt
+<target-repo>/.qa-agents/runs/latest-run.json
+```
+
+Fields stored:
+
+```txt
+targetRepo        - absolute path to the target repo
+mode              - "file" or "suite"
+testFile          - path to the test file (file mode only)
+environment       - selected --env value
+target            - selected --target value
+varsFile          - path to --vars-file if provided
+loadedEnvFiles    - list of .env files that were loaded
+command           - the full command that was run
+exitCode          - process exit code
+status            - "passed" or "failed"
+startedAt         - ISO timestamp
+finishedAt        - ISO timestamp
+durationMs        - run duration in milliseconds
+summary           - test result counts
+failedTests       - list of failed test details
+```
+
+Summary shape:
+
+```txt
+total / passed / failed / skipped / notRun
+```
+
+Each failed test includes:
+
+```txt
+file          - spec file path
+title         - test title
+errorType     - classified error category
+message       - error message
+trace         - stack trace
+screenshot    - path to screenshot if available
+video         - path to video if available
+```
+
+---
+
+## Failure analysis
+
+```bash
+npm run dev -- analyze-failures <target-repo>
+```
+
+It:
+
+- Reads `.qa-agents/runs/latest-run.json`.
+- Prints run status, environment, target, and summary counts.
+- Prints details for each failed test.
+- Classifies failures using basic pattern matching:
+  - Environment / service unavailable
+  - Navigation timeout
+  - Locator timeout
+  - URL assertion failed
+  - Authentication / authorization error
+  - Unknown
+- Prints likely cause and suggested actions for each failure category.
+- Does not rerun tests.
+- Does not modify any files.
+- Does not self-heal.
+
+---
+
+## Current agent-like capabilities
+
+The CLI now covers the following capability areas. These are not independent AI agents yet — they are deterministic CLI capabilities that prepare the system for future multi-agent orchestration.
+
+```txt
+Repo Analyst Agent          -> analyze, analyze --save
+Local Test Intake Agent     -> generate --spec (plan only)
+Automation Planner          -> generate --spec (Automation Plan output)
+QA Automation Agent (MVP)   -> generate --spec --write (deterministic)
+Duplicate Guard             -> duplicate detection before --write
+Suite Inspector Agent       -> inspect
+Environment & Execution     -> init-config, env-check, discover-envs
+Test Runner Agent           -> run --file, run --suite
+Run Results Collector       -> latest-run.json written after each run
+Failure Analyzer Agent      -> analyze-failures
+```
+
+---
+
+## Current technical debt
+
+`src/cli/index.ts` is too large and should be modularized before adding more features.
+
+Suggested future module structure:
+
+```txt
+src/
+  cli/
+    index.ts
+    help.ts
+
+  commands/
+    analyze.command.ts
+    generate.command.ts
+    inspect.command.ts
+    initConfig.command.ts
+    envCheck.command.ts
+    discoverEnvs.command.ts
+    run.command.ts
+    analyzeFailures.command.ts
+
+  core/
+    projectScanner.ts
+    projectProfile.ts
+    executionConfig.ts
+    envLoader.ts
+    testDiscovery.ts
+    testRunner.ts
+    runResults.ts
+    failureAnalyzer.ts
+    duplicateDetection.ts
+    testGeneration.ts
+    pathUtils.ts
+    textUtils.ts
+
+  types/
+    project.types.ts
+    execution.types.ts
+    run.types.ts
+    failure.types.ts
+```
+
+Refactor incrementally — do not attempt a big-bang rewrite:
+
+1. Move help text to `src/cli/help.ts`.
+2. Move env file loading to `core/envLoader.ts`.
+3. Move execution config logic to `core/executionConfig.ts`.
+4. Move run result logic to `core/runResults.ts`.
+5. Move failure analyzer logic to `core/failureAnalyzer.ts`.
+6. Split commands one by one.
+
+---
+
+## Next planned feature
+
+After documentation and modularization:
+
+```bash
+npm run dev -- run <target-repo> --failed [--env <env>] [--target <target>] [--vars-file <file>]
+```
+
+Purpose:
+
+- Read `latest-run.json`.
+- Extract the list of failed test files.
+- Re-run only those files.
+- Do not self-heal yet.
