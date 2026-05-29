@@ -8,7 +8,7 @@ import { printHelp } from './help';
 import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
 import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
 import { RunSummary, FailedTest, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
-import { FailureClassification, cleanMojibake, classifyFailure } from '../core/failureAnalyzer';
+import { FailureClassification, cleanMojibake, classifyFailure, buildRetryContextLines } from '../core/failureAnalyzer';
 import { buildRunCommand } from '../core/testRunner';
 
 function saveProjectProfile(rootPath: string, analysis: ProjectScanResult): void {
@@ -1389,6 +1389,8 @@ if (command === 'analyze') {
     `- Skipped: ${runData.summary?.skipped ?? 'N/A'}`,
     `- Not run: ${runData.summary?.notRun ?? 'N/A'}`,
   ];
+
+  lines.push(...buildRetryContextLines(runData));
 
   const failures: FailedTest[] = runData.failedTests ?? [];
 

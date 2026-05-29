@@ -1,4 +1,4 @@
-import { FailedTest } from './runResults';
+import { FailedTest, LatestRunData } from './runResults';
 
 export type FailureClassification = {
   category: string;
@@ -92,4 +92,60 @@ export function classifyFailure(failure: FailedTest): FailureClassification {
       'Re-run the failed test individually.',
     ],
   };
+}
+
+export function buildRetryContextLines(runData: LatestRunData): string[] {
+  const retry = runData.retry;
+  if (!retry?.isRetry || !retry.sourceRun) return [];
+
+  const src = retry.sourceRun;
+  const srcSummary = src.summary;
+
+  const fmt = (v: number | null) => v !== null ? String(v) : 'N/A';
+
+  const lines: string[] = [
+    '',
+    'Retry context:',
+    '- This run is a retry of previously failed tests.',
+    `- Source run status: ${src.status}`,
+    `- Source run mode: ${src.mode}`,
+    `- Source run command: ${src.command}`,
+    '- Source run summary:',
+    `  - Total: ${fmt(srcSummary.total)}`,
+    `  - Passed: ${fmt(srcSummary.passed)}`,
+    `  - Failed: ${fmt(srcSummary.failed)}`,
+    `  - Skipped: ${fmt(srcSummary.skipped)}`,
+    `  - Not run: ${fmt(srcSummary.notRun)}`,
+  ];
+
+  if (retry.rerunFiles.length > 0) {
+    lines.push('- Re-run files:');
+    for (const f of retry.rerunFiles) lines.push(`  - ${f}`);
+  }
+
+  lines.push('', `Retry result: ${runData.status}`);
+
+  if (runData.status === 'passed') {
+    lines.push(
+      'All previously failed tests passed on retry.',
+      '',
+      'Classification: Flaky / intermittent test or environment timing issue.',
+      'Suggested actions:',
+      '  1. Review test stability (waits, retries, state isolation).',
+      '  2. Check for race conditions or timing dependencies.',
+      '  3. Consider adding test.retries in playwright.config.ts.',
+    );
+  } else {
+    lines.push(
+      'Tests failed again on retry.',
+      '',
+      'Classification: Persistent failure.',
+      'Suggested actions:',
+      '  1. Review the failure details below.',
+      '  2. Check environment, credentials, and service availability.',
+      '  3. Run the failed test in headed mode for visual debugging.',
+    );
+  }
+
+  return lines;
 }
