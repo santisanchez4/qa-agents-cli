@@ -838,22 +838,46 @@ Behavior:
 
 ---
 
+## Step 33 — Multi-provider AI support for ai-review (completed)
+
+`ai-review --ai` now supports four optional AI providers. Provider selection is driven entirely by environment variables — no code changes required to switch providers.
+
+### Provider files
+
+```txt
+src/core/providers/openAiProvider.ts      - OpenAI (uses openai SDK)
+src/core/providers/anthropicProvider.ts   - Anthropic / Claude (uses @anthropic-ai/sdk)
+src/core/providers/geminiProvider.ts      - Google Gemini (uses @google/genai, dynamic import for ESM compat)
+src/core/providers/deepSeekProvider.ts    - DeepSeek (uses openai SDK with DeepSeek base URL)
+```
+
+Shared: `REVIEW_SYSTEM_MESSAGE` and `safeErrorMessage` live in `src/core/aiProvider.ts` and are imported by all providers.
+
+### Environment variables
+
+```
+QA_AGENTS_AI_PROVIDER=openai        OPENAI_API_KEY=<key>      QA_AGENTS_OPENAI_MODEL=gpt-4.1-mini     (default)
+QA_AGENTS_AI_PROVIDER=anthropic     ANTHROPIC_API_KEY=<key>   QA_AGENTS_ANTHROPIC_MODEL=claude-sonnet-4-5 (default)
+QA_AGENTS_AI_PROVIDER=gemini        GEMINI_API_KEY=<key>      QA_AGENTS_GEMINI_MODEL=gemini-2.5-flash (default)
+QA_AGENTS_AI_PROVIDER=deepseek      DEEPSEEK_API_KEY=<key>    QA_AGENTS_DEEPSEEK_MODEL=deepseek-v4-flash (default)
+```
+
+If `QA_AGENTS_AI_PROVIDER` is unset or the matching API key is missing, the disabled provider is used (Status: skipped).
+
+### Safety rules
+
+- AI only runs when `--ai` is explicitly passed.
+- Deterministic review always runs first and always produces findings.
+- AI enhances recommendations — it does not replace deterministic findings.
+- System message explicitly prohibits patches, file writes, and self-healing.
+- API keys are never printed. Error messages redact key-like strings.
+- `ai-review` is always read-only regardless of provider.
+
+---
+
 ## Next planned feature
 
-**Step 33 — Real AI provider implementation**
-
-Purpose: implement a real AI provider (Anthropic or OpenAI) inside `aiProviderResolver.ts` so that `ai-review --ai` produces enriched recommendations when an API key is present.
-
-Key rules:
-- The deterministic reviewer always runs first and always produces findings.
-- The AI layer enhances recommendations — it does not replace deterministic findings.
-- The AI layer only activates when an API key env var is set and `--ai` is passed.
-- The command remains read-only. AI must not modify or create files.
-- `createDisabledAiProvider()` remains the safe fallback when no key is present.
-
-Candidate implementation:
-- Read `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` from `process.env` in `resolveAiProvider()`.
-- Implement a real `AiProvider` (e.g. `createAnthropicProvider(config)`) in a new file.
+To be determined based on usage feedback from `ai-review --ai`.
 - Call `provider.review({ prompt, relativeFilePath, framework })`.
 - Parse `AiReviewResponse.additionalFindings` from the response.
 - Append them to the report after the deterministic findings section.

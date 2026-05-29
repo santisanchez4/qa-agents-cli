@@ -33,11 +33,14 @@ export type ReviewResult = {
   recommendedAction: string;
 };
 
-export type AiLayerStatus = 'skipped' | 'not-implemented';
+export type AiLayerStatus = 'completed' | 'skipped' | 'error' | 'not-implemented';
 
 export type AiLayerResult = {
   status: AiLayerStatus;
   reason: string;
+  provider?: string;
+  model?: string;
+  content?: string;
   additionalFindings: ReviewFinding[];
 };
 
@@ -97,9 +100,8 @@ export async function runAiLayer(
     };
   }
 
-  // Provider is configured — build prompt for the AI call.
-  // Step 33+: pass the prompt to provider.review() and merge additionalFindings.
-  void buildReviewerPrompt({
+  // Provider is configured — build prompt and call the provider.
+  const prompt = buildReviewerPrompt({
     targetRepo: context.targetRepo,
     relativeFilePath: context.relativeFilePath,
     framework: context.framework,
@@ -109,10 +111,19 @@ export async function runAiLayer(
     latestRunEnvironment: context.latestRun?.environment ?? null,
   }, result);
 
+  const response = await provider.review({
+    prompt,
+    relativeFilePath: context.relativeFilePath,
+    framework: context.framework,
+  });
+
   return {
-    status: 'not-implemented',
-    reason: 'AI provider wiring exists, but real provider implementation is pending.',
-    additionalFindings: [],
+    status: response.status,
+    reason: response.message,
+    provider: response.provider,
+    model: response.model,
+    content: response.content,
+    additionalFindings: response.additionalFindings,
   };
 }
 
@@ -137,19 +148,32 @@ export function buildAiReviewReport(
     '',
   ];
 
-  // Review mode — differs based on whether --ai was requested
-  if (context.aiEnabled) {
+  // Review mode — reflects the active layer combination
+  if (!context.aiEnabled) {
+    lines.push(
+      'Review mode:',
+      '- AI provider: not connected yet',
+      '- Engine: deterministic static review',
+    );
+  } else if (aiLayer?.status === 'completed') {
+    lines.push(
+      'Review mode:',
+      `- AI provider: ${aiLayer.provider ?? 'unknown'}`,
+      '- Engine: deterministic static review + AI-assisted layer',
+    );
+  } else if (aiLayer?.status === 'error') {
+    lines.push(
+      'Review mode:',
+      `- AI provider: ${aiLayer.provider ?? 'unknown'} (error)`,
+      '- Engine: deterministic static review',
+      '- AI-assisted layer: requested but failed',
+    );
+  } else {
     lines.push(
       'Review mode:',
       '- AI provider: disabled or not configured',
       '- Engine: deterministic static review',
       '- AI-assisted layer: requested',
-    );
-  } else {
-    lines.push(
-      'Review mode:',
-      '- AI provider: not connected yet',
-      '- Engine: deterministic static review',
     );
   }
 
@@ -188,14 +212,35 @@ export function buildAiReviewReport(
 
   // AI-assisted review section (only when --ai was requested)
   if (aiLayer !== null) {
-    const statusDisplay = aiLayer.status === 'not-implemented' ? 'not implemented' : aiLayer.status;
-    lines.push(
-      '',
-      'AI-assisted review:',
-      `- Status: ${statusDisplay}`,
-      `- Reason: ${aiLayer.reason}`,
-      '- Deterministic review completed successfully.',
-    );
+    if (aiLayer.status === 'completed') {
+      lines.push(
+        '',
+        'AI-assisted review:',
+        '- Status: completed',
+        `- Provider: ${aiLayer.provider ?? 'unknown'}`,
+        `- Model: ${aiLayer.model ?? 'unknown'}`,
+      );
+      if (aiLayer.content) {
+        lines.push('', aiLayer.content);
+      }
+    } else if (aiLayer.status === 'error') {
+      lines.push(
+        '',
+        'AI-assisted review:',
+        '- Status: error',
+        `- Reason: ${aiLayer.reason}`,
+        '- Deterministic review completed successfully.',
+      );
+    } else {
+      const statusDisplay = aiLayer.status === 'not-implemented' ? 'not implemented' : aiLayer.status;
+      lines.push(
+        '',
+        'AI-assisted review:',
+        `- Status: ${statusDisplay}`,
+        `- Reason: ${aiLayer.reason}`,
+        '- Deterministic review completed successfully.',
+      );
+    }
   }
 
   return lines;
