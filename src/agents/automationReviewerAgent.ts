@@ -9,6 +9,8 @@ import {
   checkMaintainability,
   checkFailureContext,
 } from '../core/reviewRules';
+import { resolveAiProvider } from '../core/aiProviderResolver';
+import { buildReviewerPrompt } from '../core/reviewerPromptBuilder';
 
 export type { FindingSeverity, ReviewFinding };
 export type { FindingCategory } from '../core/reviewRules';
@@ -22,6 +24,7 @@ export type ReviewContext = {
   repoRules: string | null;
   executionConfig: string | null;
   latestRun: LatestRunData | null;
+  aiEnabled: boolean;
 };
 
 export type ReviewResult = {
@@ -29,6 +32,16 @@ export type ReviewResult = {
   riskLevel: FindingSeverity;
   recommendedAction: string;
 };
+
+export type AiLayerStatus = 'skipped' | 'not-implemented';
+
+export type AiLayerResult = {
+  status: AiLayerStatus;
+  reason: string;
+  additionalFindings: ReviewFinding[];
+};
+
+// ─── Deterministic review (always runs) ──────────────────────────────────────
 
 export function runAiReview(context: ReviewContext): ReviewResult {
   const findings: ReviewFinding[] = [];
@@ -66,7 +79,50 @@ export function runAiReview(context: ReviewContext): ReviewResult {
   return { findings, riskLevel, recommendedAction };
 }
 
-export function buildAiReviewReport(context: ReviewContext, result: ReviewResult): string[] {
+// ─── Optional AI-assisted layer ───────────────────────────────────────────────
+
+export async function runAiLayer(
+  context: ReviewContext,
+  result: ReviewResult
+): Promise<AiLayerResult | null> {
+  if (!context.aiEnabled) return null;
+
+  const provider = resolveAiProvider();
+
+  if (!provider.isConfigured()) {
+    return {
+      status: 'skipped',
+      reason: 'AI provider is not configured.',
+      additionalFindings: [],
+    };
+  }
+
+  // Provider is configured — build prompt for the AI call.
+  // Step 33+: pass the prompt to provider.review() and merge additionalFindings.
+  void buildReviewerPrompt({
+    targetRepo: context.targetRepo,
+    relativeFilePath: context.relativeFilePath,
+    framework: context.framework,
+    testCommand: context.testCommand,
+    repoRules: context.repoRules,
+    latestRunStatus: context.latestRun?.status ?? null,
+    latestRunEnvironment: context.latestRun?.environment ?? null,
+  }, result);
+
+  return {
+    status: 'not-implemented',
+    reason: 'AI provider wiring exists, but real provider implementation is pending.',
+    additionalFindings: [],
+  };
+}
+
+// ─── Report builder ───────────────────────────────────────────────────────────
+
+export function buildAiReviewReport(
+  context: ReviewContext,
+  result: ReviewResult,
+  aiLayer: AiLayerResult | null = null
+): string[] {
   const { targetRepo, relativeFilePath, framework, testCommand, latestRun } = context;
   const { findings, riskLevel, recommendedAction } = result;
 
@@ -79,9 +135,25 @@ export function buildAiReviewReport(context: ReviewContext, result: ReviewResult
     'Test file:',
     relativeFilePath,
     '',
-    'Review mode:',
-    '- AI provider: not connected yet',
-    '- Engine: deterministic static review',
+  ];
+
+  // Review mode — differs based on whether --ai was requested
+  if (context.aiEnabled) {
+    lines.push(
+      'Review mode:',
+      '- AI provider: disabled or not configured',
+      '- Engine: deterministic static review',
+      '- AI-assisted layer: requested',
+    );
+  } else {
+    lines.push(
+      'Review mode:',
+      '- AI provider: not connected yet',
+      '- Engine: deterministic static review',
+    );
+  }
+
+  lines.push(
     '',
     'Project context:',
     `- Framework: ${framework}`,
@@ -94,26 +166,37 @@ export function buildAiReviewReport(context: ReviewContext, result: ReviewResult
     `- Risk level: ${riskLevel}`,
     `- Findings: ${findings.length}`,
     `- Recommended next action: ${recommendedAction}`,
-  ];
+  );
 
   if (findings.length === 0) {
     lines.push('', 'No significant issues found. Test appears healthy.');
-    return lines;
+  } else {
+    lines.push('', 'Findings:');
+    findings.forEach((f, i) => {
+      lines.push(
+        '',
+        `${i + 1}. [${f.category}] ${f.title}`,
+        `   Severity: ${f.severity}`,
+        `   Evidence:`,
+        `   ${f.evidence}`,
+        '',
+        `   Why it matters: ${f.whyItMatters}`,
+        `   Recommendation: ${f.recommendation}`,
+      );
+    });
   }
 
-  lines.push('', 'Findings:');
-  findings.forEach((f, i) => {
+  // AI-assisted review section (only when --ai was requested)
+  if (aiLayer !== null) {
+    const statusDisplay = aiLayer.status === 'not-implemented' ? 'not implemented' : aiLayer.status;
     lines.push(
       '',
-      `${i + 1}. [${f.category}] ${f.title}`,
-      `   Severity: ${f.severity}`,
-      `   Evidence:`,
-      `   ${f.evidence}`,
-      '',
-      `   Why it matters: ${f.whyItMatters}`,
-      `   Recommendation: ${f.recommendation}`,
+      'AI-assisted review:',
+      `- Status: ${statusDisplay}`,
+      `- Reason: ${aiLayer.reason}`,
+      '- Deterministic review completed successfully.',
     );
-  });
+  }
 
   return lines;
 }

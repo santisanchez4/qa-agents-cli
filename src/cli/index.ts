@@ -13,7 +13,7 @@ import { buildRunReport } from '../core/reportGenerator';
 import { buildRunCommand } from '../core/testRunner';
 import { ExistingPatterns, AutomationPlanResult, collectSpecFiles, buildAutomationPlan, buildTestCode, buildDeterministicTestDraft } from '../core/testGeneration';
 import { detectRelatedTests } from '../core/duplicateDetection';
-import { ReviewContext, runAiReview, buildAiReviewReport } from '../agents/automationReviewerAgent';
+import { ReviewContext, runAiReview, runAiLayer, buildAiReviewReport } from '../agents/automationReviewerAgent';
 
 function saveProjectProfile(rootPath: string, analysis: ProjectScanResult): void {
   const qaDir = path.join(rootPath, '.qa-agents');
@@ -977,6 +977,7 @@ if (command === 'analyze') {
 } else if (command === 'ai-review') {
   const fileFlagIndex = args.indexOf('--file');
   const relativeTestFile = fileFlagIndex !== -1 ? args[fileFlagIndex + 1] : undefined;
+  const useAi = args.includes('--ai');
 
   if (!relativeTestFile) {
     console.error('Missing --file argument. Provide a test file path relative to the target repo.');
@@ -1016,11 +1017,18 @@ if (command === 'analyze') {
     repoRules,
     executionConfig,
     latestRun,
+    aiEnabled: useAi,
   };
 
-  const reviewResult = runAiReview(reviewContext);
-  const reviewLines = buildAiReviewReport(reviewContext, reviewResult);
-  console.log('\n' + reviewLines.join('\n'));
+  (async () => {
+    const reviewResult = runAiReview(reviewContext);
+    const aiLayer = await runAiLayer(reviewContext, reviewResult);
+    const reviewLines = buildAiReviewReport(reviewContext, reviewResult, aiLayer);
+    console.log('\n' + reviewLines.join('\n'));
+  })().catch(err => {
+    console.error('ai-review failed unexpectedly:', (err as Error).message);
+    process.exit(1);
+  });
 } else {
   printHelp();
 }

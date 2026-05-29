@@ -817,21 +817,43 @@ Review mode:
 
 ---
 
+## Step 32 — Optional AI-assisted review wiring (completed)
+
+Added `--ai` flag to `ai-review` command. Wired the optional AI layer without connecting a real provider.
+
+New module: `src/core/aiProviderResolver.ts` — exports `resolveAiProvider()`.
+Currently always returns `createDisabledAiProvider()`. Step 33 adds real provider factories.
+
+Updated: `src/agents/automationReviewerAgent.ts`
+- `ReviewContext.aiEnabled: boolean` — set by `--ai` flag.
+- `AiLayerResult` type (`status`, `reason`, `additionalFindings`).
+- `runAiLayer(context, result): Promise<AiLayerResult | null>` — calls resolver, checks `isConfigured()`.
+- `buildAiReviewReport` — updated to accept `AiLayerResult | null` and render the AI section.
+
+Behavior:
+- Without `--ai`: output unchanged (deterministic review only).
+- With `--ai`, provider not configured: prints deterministic review + "AI-assisted review: skipped".
+- With `--ai`, provider configured but not implemented: prints "Status: not implemented".
+- Deterministic review always runs first regardless of `--ai`.
+
+---
+
 ## Next planned feature
 
-**Step 32 — Connect optional AI provider**
+**Step 33 — Real AI provider implementation**
 
-Purpose: wire the AI provider into the `ai-review` command so that, when an API key is present, the AI-assisted layer runs after the deterministic reviewer and enhances its findings.
+Purpose: implement a real AI provider (Anthropic or OpenAI) inside `aiProviderResolver.ts` so that `ai-review --ai` produces enriched recommendations when an API key is present.
 
 Key rules:
 - The deterministic reviewer always runs first and always produces findings.
-- The AI layer is optional and only activates when a provider is configured.
 - The AI layer enhances recommendations — it does not replace deterministic findings.
-- The `Review mode:` section will update to reflect the active provider.
-- The command remains read-only. No file modifications ever.
+- The AI layer only activates when an API key env var is set and `--ai` is passed.
+- The command remains read-only. AI must not modify or create files.
+- `createDisabledAiProvider()` remains the safe fallback when no key is present.
 
 Candidate implementation:
-- Read `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` from the environment.
-- Use `createDisabledAiProvider()` as the fallback when no key is present.
-- Call `buildReviewerPrompt(context, result)` to build the prompt.
-- Merge `AiReviewResponse.additionalFindings` into the report after deterministic findings.
+- Read `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` from `process.env` in `resolveAiProvider()`.
+- Implement a real `AiProvider` (e.g. `createAnthropicProvider(config)`) in a new file.
+- Call `provider.review({ prompt, relativeFilePath, framework })`.
+- Parse `AiReviewResponse.additionalFindings` from the response.
+- Append them to the report after the deterministic findings section.
