@@ -16,5 +16,6 @@ Available commands:
   discover-envs [path]          Discover env files, variables, environments, and execution targets
   analyze-failures [path]       Analyze failures from the latest run result
   env-check [path] --env <env> --target <target> [--vars-file <file>]  Validate environment variables and execution target
+  report [path]                 Print executive report from latest run result
 `);
 }

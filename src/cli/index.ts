@@ -9,6 +9,7 @@ import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
 import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
 import { RunSummary, FailedTest, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
 import { FailureClassification, cleanMojibake, classifyFailure, buildRetryContextLines } from '../core/failureAnalyzer';
+import { buildRunReport } from '../core/reportGenerator';
 import { buildRunCommand } from '../core/testRunner';
 import { ExistingPatterns, AutomationPlanResult, collectSpecFiles, buildAutomationPlan, buildTestCode, buildDeterministicTestDraft } from '../core/testGeneration';
 import { detectRelatedTests } from '../core/duplicateDetection';
@@ -953,6 +954,25 @@ if (command === 'analyze') {
   const profile: ProjectScanResult = JSON.parse(profileRaw);
   const report = buildInspectReport(profile, targetPath);
   console.log('\n' + report);
+} else if (command === 'report') {
+  const runResultPath = path.join(targetPath, '.qa-agents', 'runs', 'latest-run.json');
+  const runResultRaw = readFileIfExists(runResultPath);
+
+  if (!runResultRaw) {
+    console.error('No latest run result found. Run tests first.');
+    process.exit(1);
+  }
+
+  let runData: LatestRunData;
+  try {
+    runData = JSON.parse(runResultRaw) as LatestRunData;
+  } catch {
+    console.error('Could not read latest run result.');
+    process.exit(1);
+  }
+
+  const reportLines = buildRunReport(runData);
+  console.log('\n' + reportLines.join('\n'));
 } else {
   printHelp();
 }
