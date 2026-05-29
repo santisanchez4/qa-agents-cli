@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { stripAnsi, cleanText, normalizeErrorType } from './textSanitizer';
 
 export type RunSummary = {
   total: number | null;
@@ -79,8 +80,8 @@ export function parseFailedTests(output: string): FailedTest[] {
       const m = lines[i].match(headerRe);
       if (!m) continue;
 
-      const file = m[1].trim().replace(/\\/g, '/');
-      const title = m[4].trim();
+      const file = stripAnsi(m[1]).trim().replace(/\\/g, '/');
+      const title = cleanText(m[4]);
       let errorType: string | null = null;
       let message: string | null = null;
       let trace: string | null = null;
@@ -93,7 +94,10 @@ export function parseFailedTests(output: string): FailedTest[] {
 
         if (!errorType) {
           const em = line.match(/^\s+(TimeoutError|AssertionError|Error|RangeError|TypeError|EvalError):\s*(.+)$/);
-          if (em) { errorType = em[1]; message = `${em[1]}: ${em[2].trim()}`; }
+          if (em) {
+            errorType = em[1];
+            message = cleanText(`${em[1]}: ${em[2]}`);
+          }
         }
         if (!trace && line.includes('trace.zip')) {
           const tm = line.match(/(\S+trace\.zip)/);
@@ -109,7 +113,8 @@ export function parseFailedTests(output: string): FailedTest[] {
         }
       }
 
-      tests.push({ file, title, errorType, message, trace, screenshot, video });
+      const cleanedErrorType = normalizeErrorType(errorType, message);
+      tests.push({ file, title, errorType: cleanedErrorType, message, trace, screenshot, video });
     }
   } catch { /* best-effort */ }
   return tests;

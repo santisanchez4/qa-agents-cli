@@ -1395,7 +1395,11 @@ if (command === 'analyze') {
   const failures: FailedTest[] = runData.failedTests ?? [];
 
   if (runData.status === 'passed' || failures.length === 0) {
-    lines.push('', 'No failures found in latest run.');
+    if (runData.retry?.isRetry) {
+      lines.push('', 'No failures found in retry run.', 'Original failed tests passed on retry.');
+    } else {
+      lines.push('', 'No failures found in latest run.');
+    }
   } else {
     for (let i = 0; i < failures.length; i++) {
       const f = failures[i];
