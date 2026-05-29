@@ -7,7 +7,7 @@ import { scanProject, ProjectScanResult } from '../core/projectScanner';
 import { printHelp } from './help';
 import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
 import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
-import { RunSummary, FailedTest, LatestRunData, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
+import { RunSummary, FailedTest, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
 import { FailureClassification, cleanMojibake, classifyFailure } from '../core/failureAnalyzer';
 import { buildRunCommand } from '../core/testRunner';
 
@@ -953,6 +953,7 @@ if (command === 'analyze') {
   const fileFlagIndex = args.indexOf('--file');
   const relativeTestFile = fileFlagIndex !== -1 ? args[fileFlagIndex + 1] : undefined;
   const isSuite = args.includes('--suite');
+  const isFailed = args.includes('--failed');
   const envFlagIdx = args.indexOf('--env');
   const selectedEnv = envFlagIdx !== -1 ? args[envFlagIdx + 1] : 'local';
   const targetFlagIdx = args.indexOf('--target');
@@ -960,14 +961,55 @@ if (command === 'analyze') {
   const varsFlagIdx = args.indexOf('--vars-file');
   const varsFileArg = varsFlagIdx !== -1 ? args[varsFlagIdx + 1] : undefined;
 
-  if (relativeTestFile && isSuite) {
-    console.error('Please use either --file or --suite, not both.');
+  const modeCount = (args.includes('--file') ? 1 : 0) + (isSuite ? 1 : 0) + (isFailed ? 1 : 0);
+  if (modeCount > 1) {
+    console.error('Please use only one run mode: --file, --suite, or --failed.');
+    process.exit(1);
+  }
+  if (modeCount === 0) {
+    console.error('Please provide one run mode: --file <file>, --suite, or --failed.');
     process.exit(1);
   }
 
-  if (!relativeTestFile && !isSuite) {
-    console.error('Please provide either --file <file> or --suite.');
-    process.exit(1);
+  // --failed: load latest run and extract failed file paths before anything else
+  let failedFiles: string[] = [];
+  let retrySourceRun: RetrySourceRun | null = null;
+
+  if (isFailed) {
+    const runResultPath = path.join(targetPath, '.qa-agents', 'runs', 'latest-run.json');
+    const runResultRaw = readFileIfExists(runResultPath);
+    if (!runResultRaw) {
+      console.error('No latest run result found. Run a suite or file first.');
+      process.exit(1);
+    }
+    let latestRun: LatestRunData;
+    try {
+      latestRun = JSON.parse(runResultRaw) as LatestRunData;
+    } catch {
+      console.error('Could not read latest run result.');
+      process.exit(1);
+    }
+    if (!latestRun.failedTests || latestRun.failedTests.length === 0) {
+      console.log('No failed tests found in latest run.');
+      process.exit(0);
+    }
+    failedFiles = [...new Set(
+      latestRun.failedTests.map(t => t.file).filter((f): f is string => f !== null)
+    )];
+    if (failedFiles.length === 0) {
+      console.log('No failed tests found in latest run.');
+      process.exit(0);
+    }
+    retrySourceRun = {
+      status: latestRun.status,
+      mode: latestRun.mode,
+      environment: latestRun.environment,
+      target: latestRun.target,
+      command: latestRun.command,
+      startedAt: latestRun.startedAt,
+      finishedAt: latestRun.finishedAt,
+      summary: latestRun.summary,
+    };
   }
 
   const profilePath = path.join(targetPath, '.qa-agents', 'project-profile.json');
@@ -983,9 +1025,9 @@ if (command === 'analyze') {
 
   const profile: ProjectScanResult = JSON.parse(profileRaw);
 
-  // Validate test file exists early (--file mode)
-  if (!isSuite) {
-    const absoluteTestFile = path.join(targetPath, relativeTestFile!);
+  // Validate test file exists on disk (--file mode only)
+  if (relativeTestFile !== undefined && !isFailed) {
+    const absoluteTestFile = path.join(targetPath, relativeTestFile);
     if (!fs.existsSync(absoluteTestFile)) {
       console.error(`Test file not found:\n${absoluteTestFile}`);
       process.exit(1);
@@ -1059,6 +1101,9 @@ if (command === 'analyze') {
     if (isSuite) {
       finalSpawnArgs = ['run', scriptName];
       displayCmd = `${pkgManager} run ${scriptName}`;
+    } else if (isFailed) {
+      finalSpawnArgs = ['run', scriptName, '--', ...failedFiles];
+      displayCmd = `${pkgManager} run ${scriptName} -- ${failedFiles.join(' ')}`;
     } else {
       finalSpawnArgs = ['run', scriptName, '--', relativeTestFile!];
       displayCmd = `${pkgManager} run ${scriptName} -- ${relativeTestFile}`;
@@ -1067,12 +1112,21 @@ if (command === 'analyze') {
     // Legacy: no execution-config.json
     console.log('Execution config not found. Running with project profile testCommand.');
     const testCmd = profile.testCommand ?? 'npx playwright test';
+    const parts = testCmd.trim().split(/\s+/);
+    const isNpmRun = parts.length >= 2 && parts[0] === 'npm' && parts[1] === 'run';
 
     if (isSuite) {
-      const parts = testCmd.trim().split(/\s+/);
       finalCmd = parts[0];
       finalSpawnArgs = parts.slice(1);
       displayCmd = testCmd;
+    } else if (isFailed) {
+      finalCmd = parts[0];
+      finalSpawnArgs = isNpmRun
+        ? [...parts.slice(1), '--', ...failedFiles]
+        : [...parts.slice(1), ...failedFiles];
+      displayCmd = isNpmRun
+        ? `${testCmd} -- ${failedFiles.join(' ')}`
+        : `${testCmd} ${failedFiles.join(' ')}`;
     } else {
       const r = buildRunCommand(testCmd, relativeTestFile!);
       finalCmd = r.cmd;
@@ -1082,7 +1136,11 @@ if (command === 'analyze') {
   }
 
   // Print header
-  const header = isSuite ? 'QA Agents - Suite Runner' : 'QA Agents - Test Runner';
+  const header = isFailed
+    ? 'QA Agents - Failed Tests Runner'
+    : isSuite
+    ? 'QA Agents - Suite Runner'
+    : 'QA Agents - Test Runner';
   console.log(`\n${header}\n`);
   console.log(`Target repo:\n${targetPath}\n`);
 
@@ -1096,7 +1154,9 @@ if (command === 'analyze') {
     }
   }
 
-  if (!isSuite) {
+  if (isFailed) {
+    console.log(`Failed test files:\n${failedFiles.map(f => `- ${f}`).join('\n')}\n`);
+  } else if (relativeTestFile !== undefined) {
     console.log(`Test file:\n${relativeTestFile}\n`);
   }
 
@@ -1121,9 +1181,17 @@ if (command === 'analyze') {
   const output = (result.stdout ?? '') + '\n' + (result.stderr ?? '');
   const exitCode = result.status ?? 1;
 
+  const runMode: 'file' | 'suite' | 'failed' = isFailed ? 'failed' : isSuite ? 'suite' : 'file';
+
+  const retry: RetryMetadata = {
+    isRetry: isFailed,
+    sourceRun: retrySourceRun,
+    rerunFiles: isFailed ? failedFiles : [],
+  };
+
   const runData: LatestRunData = {
     targetRepo: targetPath,
-    mode: isSuite ? 'suite' : 'file',
+    mode: runMode,
     testFile: relativeTestFile ?? null,
     environment: hasConfig ? selectedEnv : null,
     target: hasConfig ? selectedTarget : null,
@@ -1137,9 +1205,13 @@ if (command === 'analyze') {
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     summary: parsePlaywrightSummary(output),
     failedTests: parseFailedTests(output),
+    retry,
   };
 
   saveLatestRun(targetPath, runData);
+  if (isFailed) {
+    console.log('Retry metadata saved in latest-run.json.');
+  }
   process.exit(exitCode);
 } else if (command === 'init-config') {
   const profilePath = path.join(targetPath, '.qa-agents', 'project-profile.json');

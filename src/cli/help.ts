@@ -10,6 +10,7 @@ Available commands:
   generate [path] --spec <file> --write --force  Write even if related tests exist
   run [path] --file <file> [--env <env>] [--target <target>] [--vars-file <file>]
   run [path] --suite [--env <env>] [--target <target>] [--vars-file <file>]
+  run [path] --failed [--env <env>] [--target <target>] [--vars-file <file>]  Re-run failed test files from latest run
   inspect [path]                Inspect test suite, scripts, and execution modes
   init-config [path]            Create .qa-agents/execution-config.json from detected project scripts
   discover-envs [path]          Discover env files, variables, environments, and execution targets

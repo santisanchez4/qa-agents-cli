@@ -19,9 +19,26 @@ export type FailedTest = {
   video: string | null;
 };
 
+export type RetrySourceRun = {
+  status: string;
+  mode: string;
+  environment: string | null;
+  target: string | null;
+  command: string;
+  startedAt: string;
+  finishedAt: string;
+  summary: RunSummary;
+};
+
+export type RetryMetadata = {
+  isRetry: boolean;
+  sourceRun: RetrySourceRun | null;
+  rerunFiles: string[];
+};
+
 export type LatestRunData = {
   targetRepo: string;
-  mode: 'file' | 'suite';
+  mode: 'file' | 'suite' | 'failed';
   testFile: string | null;
   environment: string | null;
   target: string | null;
@@ -35,6 +52,7 @@ export type LatestRunData = {
   durationMs: number;
   summary: RunSummary;
   failedTests: FailedTest[];
+  retry: RetryMetadata;
 };
 
 export function parsePlaywrightSummary(output: string): RunSummary {
