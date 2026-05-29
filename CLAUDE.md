@@ -192,6 +192,12 @@ npm run dev -- run <target-repo> --file <test-file> [--env <env>] [--target <tar
 npm run dev -- run <target-repo> --suite [--env <env>] [--target <target>] [--vars-file <file>]
 ```
 
+### Re-run only failed tests
+
+```bash
+npm run dev -- run <target-repo> --failed [--env <env>] [--target <target>] [--vars-file <file>]
+```
+
 See [Run command behavior](#run-command-behavior).
 
 ### Analyze failures
@@ -201,6 +207,14 @@ npm run dev -- analyze-failures <target-repo>
 ```
 
 See [Failure analysis](#failure-analysis).
+
+### Print run report
+
+```bash
+npm run dev -- report <target-repo>
+```
+
+See [Run report](#run-report).
 
 ---
 
@@ -227,7 +241,11 @@ npm run dev -- run C:\Repos\warzone-ui --file tests/e2e/auth/login.spec.ts --env
 
 npm run dev -- run C:\Repos\warzone-ui --suite --env staging --target chromium
 
+npm run dev -- run C:\Repos\warzone-ui --failed --env staging --target chromium
+
 npm run dev -- analyze-failures C:\Repos\warzone-ui
+
+npm run dev -- report C:\Repos\warzone-ui
 ```
 
 > **Important:** Do not run qa-agents commands from inside the target repo using that repo's own `npm run dev`. Always run from the `qa-agents-cli` directory:
@@ -254,7 +272,9 @@ env-check [path] --env <env> --target <target> [--vars-file <file>]
 discover-envs [path]
 run [path] --file <file> [--env <env>] [--target <target>] [--vars-file <file>]
 run [path] --suite [--env <env>] [--target <target>] [--vars-file <file>]
+run [path] --failed [--env <env>] [--target <target>] [--vars-file <file>]
 analyze-failures [path]
+report [path]
 ```
 
 ---
@@ -535,13 +555,15 @@ test.describe('login smoke', () => {
 
 ## Run command behavior
 
-The `run` command supports running a single test file or the full suite, with optional environment and target selection.
+The `run` command supports three modes:
 
 ```bash
 npm run dev -- run <target-repo> --file <test-file> [--env <env>] [--target <target>] [--vars-file <file>]
-
 npm run dev -- run <target-repo> --suite [--env <env>] [--target <target>] [--vars-file <file>]
+npm run dev -- run <target-repo> --failed [--env <env>] [--target <target>] [--vars-file <file>]
 ```
+
+Only one mode may be used at a time.
 
 Behavior:
 
@@ -556,19 +578,20 @@ Behavior:
    - Falls back to the `testCommand` from the project profile.
 4. For `--file`: appends the specific test file to the command.
 5. For `--suite`: runs the full suite without appending a file path.
-6. Captures stdout/stderr, prints them, and saves run data to `.qa-agents/runs/latest-run.json`.
-7. Exits with the child process's exit code.
+6. For `--failed`: reads `latest-run.json`, extracts unique failed file paths, and reruns only those files.
+7. Captures stdout/stderr, prints them, and saves run data to `.qa-agents/runs/latest-run.json`.
+8. Exits with the child process's exit code.
 
-For `npm run` commands, inserts `--` before the file path:
+For `npm run` scripts, inserts `--` before the file path(s):
 
 ```bash
-npm run test:e2e -- <test-file>
+npm run test:e2e -- tests/e2e/a.spec.ts tests/e2e/b.spec.ts
 ```
 
 For direct commands:
 
 ```bash
-npx playwright test <test-file>
+npx playwright test tests/e2e/a.spec.ts tests/e2e/b.spec.ts
 ```
 
 ---
@@ -585,8 +608,8 @@ Fields stored:
 
 ```txt
 targetRepo        - absolute path to the target repo
-mode              - "file" or "suite"
-testFile          - path to the test file (file mode only)
+mode              - "file", "suite", or "failed"
+testFile          - path to the test file (--file mode only, otherwise null)
 environment       - selected --env value
 target            - selected --target value
 varsFile          - path to --vars-file if provided
@@ -597,27 +620,53 @@ status            - "passed" or "failed"
 startedAt         - ISO timestamp
 finishedAt        - ISO timestamp
 durationMs        - run duration in milliseconds
-summary           - test result counts
-failedTests       - list of failed test details
-```
-
-Summary shape:
-
-```txt
-total / passed / failed / skipped / notRun
+summary           - test result counts (total/passed/failed/skipped/notRun)
+failedTests       - list of failed test details (cleaned of ANSI codes)
+retry             - retry metadata (see below)
 ```
 
 Each failed test includes:
 
 ```txt
 file          - spec file path
-title         - test title
-errorType     - classified error category
-message       - error message
-trace         - stack trace
+title         - test title (ANSI-stripped)
+errorType     - normalized error category (e.g. URLAssertionError, LocatorTimeoutError)
+message       - error message (ANSI-stripped)
+trace         - path to trace.zip if available
 screenshot    - path to screenshot if available
 video         - path to video if available
 ```
+
+Retry metadata shape:
+
+```txt
+retry: {
+  isRetry    - true when this run was triggered by --failed
+  sourceRun  - snapshot of the previous run (status, mode, environment, target, command, startedAt, finishedAt, summary)
+               null for non-retry runs
+  rerunFiles - list of files that were retried
+               empty for non-retry runs
+}
+```
+
+---
+
+## Text sanitization
+
+Playwright test output may contain ANSI escape codes that make stored data and CLI output harder to read.
+
+The module `src/core/textSanitizer.ts` exports:
+
+- `stripAnsi(value)` — removes ANSI/VT escape sequences from a string.
+- `cleanText(value)` — strips ANSI codes, collapses whitespace, and trims.
+- `normalizeErrorType(errorType, message)` — improves the error type label based on message content:
+  - message contains `toHaveURL` → `URLAssertionError`
+  - message contains timeout + locator → `LocatorTimeoutError`
+  - message contains timeout + navigation → `NavigationTimeoutError`
+  - message contains 401 or 403 → `AuthorizationError`
+  - otherwise keeps the detected error type
+
+`parseFailedTests` in `runResults.ts` applies these sanitizers before saving to `latest-run.json`.
 
 ---
 
@@ -631,7 +680,15 @@ It:
 
 - Reads `.qa-agents/runs/latest-run.json`.
 - Prints run status, environment, target, and summary counts.
-- Prints details for each failed test.
+- If the run is a retry (`retry.isRetry` is true), prints a **Retry context** block showing source run details, re-run files, and a retry result classification:
+  - Retry passed → "Flaky / intermittent test or environment timing issue."
+  - Retry failed → "Persistent failure."
+- For retry runs that passed completely:
+  - Prints: `No failures found in retry run.`
+  - Prints: `Original failed tests passed on retry.`
+- For all other runs with no failures:
+  - Prints: `No failures found in latest run.`
+- Prints details and classification for each failed test.
 - Classifies failures using basic pattern matching:
   - Environment / service unavailable
   - Navigation timeout
@@ -639,10 +696,32 @@ It:
   - URL assertion failed
   - Authentication / authorization error
   - Unknown
-- Prints likely cause and suggested actions for each failure category.
 - Does not rerun tests.
 - Does not modify any files.
 - Does not self-heal.
+
+---
+
+## Run report
+
+```bash
+npm run dev -- report <target-repo>
+```
+
+It:
+
+- Reads `.qa-agents/runs/latest-run.json`.
+- Prints an executive-style run report including:
+  - Execution details (mode, environment, target, command, status, duration).
+  - Summary (total/passed/failed/skipped/notRun).
+  - Result section — retry-aware:
+    - Retry passed → "Retry was executed. Failed tests passed on retry. Classification: Flaky or intermittent."
+    - Retry failed → "Retry was executed. Failed tests failed again. Classification: Persistent failure."
+    - Non-retry passed → "Suite passed."
+    - Non-retry failed → "Suite failed. Failed tests: N. Classification: \<category\>."
+  - Failure overview listing title, file, errorType, and classification category for each failure (omitted when a retry run fully passed).
+- Does not rerun tests.
+- Does not modify any files.
 
 ---
 
@@ -658,78 +737,76 @@ QA Automation Agent (MVP)   -> generate --spec --write (deterministic)
 Duplicate Guard             -> duplicate detection before --write
 Suite Inspector Agent       -> inspect
 Environment & Execution     -> init-config, env-check, discover-envs
-Test Runner Agent           -> run --file, run --suite
+Test Runner Agent           -> run --file, run --suite, run --failed
 Run Results Collector       -> latest-run.json written after each run
-Failure Analyzer Agent      -> analyze-failures
+Failure Analyzer Agent      -> analyze-failures (retry-aware)
+Run Report Generator        -> report
 ```
 
 ---
 
-## Current technical debt
-
-`src/cli/index.ts` is too large and should be modularized before adding more features.
-
-Suggested future module structure:
+## Current module structure
 
 ```txt
 src/
   cli/
-    index.ts
-    help.ts
-
-  commands/
-    analyze.command.ts
-    generate.command.ts
-    inspect.command.ts
-    initConfig.command.ts
-    envCheck.command.ts
-    discoverEnvs.command.ts
-    run.command.ts
-    analyzeFailures.command.ts
+    index.ts              - command parsing and orchestration
+    help.ts               - printHelp()
 
   core/
-    projectScanner.ts
-    projectProfile.ts
-    executionConfig.ts
-    envLoader.ts
-    testDiscovery.ts
-    testRunner.ts
-    runResults.ts
-    failureAnalyzer.ts
-    duplicateDetection.ts
-    testGeneration.ts
-    pathUtils.ts
-    textUtils.ts
-
-  types/
-    project.types.ts
-    execution.types.ts
-    run.types.ts
-    failure.types.ts
+    projectScanner.ts     - repo analysis
+    executionConfig.ts    - ExecutionConfig types, buildExecutionConfig, classifyTestScript
+    envLoader.ts          - parseEnvFile, loadEnvOverlay, isVarSet
+    testRunner.ts         - buildRunCommand, RunCommand type
+    runResults.ts         - LatestRunData types, parsePlaywrightSummary, parseFailedTests, saveLatestRun
+    failureAnalyzer.ts    - classifyFailure, cleanMojibake, buildRetryContextLines
+    duplicateDetection.ts - detectRelatedTests
+    testGeneration.ts     - buildAutomationPlan, buildTestCode, buildDeterministicTestDraft, collectSpecFiles
+    textSanitizer.ts      - stripAnsi, cleanText, normalizeErrorType
+    reportGenerator.ts    - buildRunReport
 ```
 
-Refactor incrementally — do not attempt a big-bang rewrite:
+Command logic (analyze, generate, run, inspect, init-config, env-check, discover-envs, analyze-failures, report) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` is the remaining technical debt.
 
-1. Move help text to `src/cli/help.ts`.
-2. Move env file loading to `core/envLoader.ts`.
-3. Move execution config logic to `core/executionConfig.ts`.
-4. Move run result logic to `core/runResults.ts`.
-5. Move failure analyzer logic to `core/failureAnalyzer.ts`.
-6. Split commands one by one.
+---
+
+## Remaining technical debt
+
+The main remaining debt is splitting `src/cli/index.ts` command blocks into separate command modules:
+
+```txt
+src/commands/
+  analyze.command.ts
+  generate.command.ts
+  inspect.command.ts
+  initConfig.command.ts
+  envCheck.command.ts
+  discoverEnvs.command.ts
+  run.command.ts
+  analyzeFailures.command.ts
+  report.command.ts
+```
+
+Split incrementally, one command at a time.
 
 ---
 
 ## Next planned feature
 
-After documentation and modularization:
+**Step 30 — AI Automation Reviewer Agent**
+
+Purpose: review an existing `.spec.ts` file and produce a structured quality assessment.
+
+Candidate command:
 
 ```bash
-npm run dev -- run <target-repo> --failed [--env <env>] [--target <target>] [--vars-file <file>]
+npm run dev -- review <target-repo> --file <spec-file>
 ```
 
-Purpose:
-
-- Read `latest-run.json`.
-- Extract the list of failed test files.
-- Re-run only those files.
-- Do not self-heal yet.
+Expected output:
+- Test structure quality (describes, befores, assertions).
+- Missing coverage areas based on spec title.
+- Locator quality (role-based vs fragile selectors).
+- Suggested improvements.
+- Does not modify files.
+- Does not run tests.
