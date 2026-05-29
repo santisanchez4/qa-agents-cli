@@ -5,7 +5,8 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { scanProject, ProjectScanResult } from '../core/projectScanner';
 import { printHelp } from './help';
-import { parseEnvFile, loadEnvOverlay, isVarSet, EnvLoadResult } from '../core/envLoader';
+import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
+import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
 
 function saveProjectProfile(rootPath: string, analysis: ProjectScanResult): void {
   const qaDir = path.join(rootPath, '.qa-agents');
@@ -552,16 +553,6 @@ function detectSupportFoldersInDir(testsDirAbs: string, testsDir: string): strin
   return found;
 }
 
-function classifyTestScript(value: string): string | null {
-  const v = value.toLowerCase();
-  if (/lambdatest|lambda|lt:|cloud/.test(v)) return 'cloud';
-  if (/debug/.test(v)) return 'debug';
-  if (/report|allure|html-report/.test(v)) return 'report';
-  if (/headed/.test(v)) return 'headed';
-  if (/--ui|\bui\b/.test(v)) return 'ui';
-  if (/playwright\s+test|cypress\s+run|npm\s+test|\btest\b/.test(v)) return 'local';
-  return null;
-}
 
 function buildInspectReport(profile: ProjectScanResult, targetPath: string): string {
   const frameworks = (profile.detectedFrameworks ?? []).join(', ') || '(none detected)';
@@ -657,70 +648,6 @@ function buildInspectReport(profile: ProjectScanResult, targetPath: string): str
   return lines.join('\n');
 }
 
-type ExecutionTarget = {
-  script: string;
-  requiredEnv?: string[]; 
-};
-
-type ExecutionEnvironment = {
-  requiredEnv: string[];
-  notes: string;
-};
-
-type ExecutionConfig = {
-  environments: Record<string, ExecutionEnvironment>;
-  targets: Record<string, ExecutionTarget>;
-};
-
-function buildExecutionConfig(profile: ProjectScanResult): ExecutionConfig {
-  const scripts = profile.packageScripts ?? {};
-
-  const environments: Record<string, ExecutionEnvironment> = {
-    local: { requiredEnv: [], notes: 'Use this environment when running against local services.' },
-    QA:    { requiredEnv: [], notes: 'Configure QA-specific variables here.' },
-    UAT:   { requiredEnv: [], notes: 'Configure UAT-specific variables here.' },
-  };
-
-  const targets: Record<string, ExecutionTarget> = {};
-
-  for (const [name, value] of Object.entries(scripts)) {
-    const n = name.toLowerCase();
-    const v = value.toLowerCase();
-
-    if (/browserstack/.test(n) || /browserstack/.test(v)) {
-      targets['browserstack'] ??= {
-        script: name,
-        requiredEnv: ['BROWSERSTACK_USERNAME', 'BROWSERSTACK_ACCESS_KEY'],
-      };
-    } else if (/lambdatest|lambda|lt|cloud/.test(n) || /lambdatest|lambda|lt|cloud/.test(v)) {
-      targets['lambdatest'] ??= {
-        script: name,
-        requiredEnv: ['LT_USERNAME', 'LT_ACCESS_KEY'],
-      };
-    } else if (/headed/.test(n) || /headed/.test(v)) {
-      targets['headed'] ??= { script: name };
-    } else if (/--ui|\bui\b/.test(n) || /--ui|\bui\b/.test(v)) {
-      targets['ui'] ??= { script: name };
-    } else if (/playwright\s+test|cypress\s+run|\btest\b/.test(v)) {
-      targets['local'] ??= { script: name };
-    }
-  }
-
-  // Fallback: derive local script name from testCommand if not found above
-  if (!targets['local'] && profile.testCommand) {
-    const match = profile.testCommand.match(/(?:npm|yarn|pnpm)\s+run\s+(\S+)/);
-    if (match) {
-      targets['local'] = { script: match[1] };
-    } else {
-      targets['local'] = { script: profile.testCommand };
-    }
-  }
-
-  // Ensure local is always present
-  targets['local'] ??= { script: '' };
-
-  return { environments, targets };
-}
 
 const DISCOVER_ENV_KEYWORDS = [
   'local', 'dev', 'development', 'qa', 'uat', 'staging', 'production', 'prod',
