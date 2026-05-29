@@ -13,6 +13,7 @@ Available commands:
   run [path] --failed [--env <env>] [--target <target>] [--vars-file <file>]  Re-run failed test files from latest run
   inspect [path]                Inspect test suite, scripts, and execution modes
   init-config [path]            Create .qa-agents/execution-config.json from detected project scripts
+  init-rules [path]             Create a repo-rules.md template for a target repo
   discover-envs [path]          Discover env files, variables, environments, and execution targets
   analyze-failures [path]       Analyze failures from the latest run result
   env-check [path] --env <env> --target <target> [--vars-file <file>]  Validate environment variables and execution target

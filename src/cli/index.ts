@@ -7,6 +7,7 @@ import { scanProject, ProjectScanResult } from '../core/projectScanner';
 import { printHelp } from './help';
 import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
 import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
+import { buildRepoRulesTemplate } from '../core/repoRulesTemplate';
 import { RunSummary, FailedTest, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
 import { FailureClassification, cleanMojibake, classifyFailure, buildRetryContextLines } from '../core/failureAnalyzer';
 import { buildRunReport } from '../core/reportGenerator';
@@ -740,6 +741,20 @@ if (command === 'analyze') {
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
   console.log(`Execution config created:\n${configPath}`);
+} else if (command === 'init-rules') {
+  const qaDir = path.join(targetPath, '.qa-agents');
+  if (!fs.existsSync(qaDir)) {
+    fs.mkdirSync(qaDir, { recursive: true });
+  }
+
+  const rulesPath = path.join(qaDir, 'repo-rules.md');
+
+  if (fs.existsSync(rulesPath)) {
+    console.log(`Repo rules file already exists:\n${rulesPath}`);
+  } else {
+    fs.writeFileSync(rulesPath, buildRepoRulesTemplate(), 'utf-8');
+    console.log(`Created repo rules file:\n${rulesPath}`);
+  }
 } else if (command === 'env-check') {
   const envFlagIndex = args.indexOf('--env');
   const selectedEnv = envFlagIndex !== -1 ? args[envFlagIndex + 1] : 'local';
