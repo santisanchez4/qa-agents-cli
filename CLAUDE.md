@@ -791,17 +791,47 @@ Split incrementally, one command at a time.
 
 ---
 
+## Step 31 — AI provider architecture (completed)
+
+Prepared the architecture for an optional AI-assisted review layer.
+
+New modules:
+
+```txt
+src/core/aiProvider.ts          - AiProviderName, AiProviderConfig, AiReviewRequest,
+                                  AiReviewResponse, AiProvider interface,
+                                  createDisabledAiProvider()
+src/core/reviewerPromptBuilder.ts - buildReviewerPrompt(context, result): string
+```
+
+The disabled provider is the safe default: `isConfigured()` returns false, `review()` returns a no-op response without calling any external service.
+
+The prompt builder constructs a structured prompt from deterministic findings plus project context. It is ready to be wired into the agent in Step 32.
+
+The `ai-review` command output is unchanged:
+```
+Review mode:
+- AI provider: not connected yet
+- Engine: deterministic static review
+```
+
+---
+
 ## Next planned feature
 
-**Step 31 — AI-assisted review layer**
+**Step 32 — Connect optional AI provider**
 
-Purpose: add an optional AI-assisted review layer on top of the existing deterministic reviewer engine.
+Purpose: wire the AI provider into the `ai-review` command so that, when an API key is present, the AI-assisted layer runs after the deterministic reviewer and enhances its findings.
 
-The deterministic engine (`src/core/aiReviewer.ts`) remains the safe, always-on base. A future AI provider will enhance its output with deeper analysis — it will not replace the deterministic checks.
+Key rules:
+- The deterministic reviewer always runs first and always produces findings.
+- The AI layer is optional and only activates when a provider is configured.
+- The AI layer enhances recommendations — it does not replace deterministic findings.
+- The `Review mode:` section will update to reflect the active provider.
+- The command remains read-only. No file modifications ever.
 
-Candidate behavior:
-- The deterministic review runs first and always produces findings.
-- If an AI provider is configured, a second pass enriches findings with natural-language reasoning, coverage gap analysis, and spec-aware suggestions.
-- The `Review mode:` section in the report will reflect which layers are active.
-
-The `ai-review` command will remain read-only regardless of which layers are active.
+Candidate implementation:
+- Read `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` from the environment.
+- Use `createDisabledAiProvider()` as the fallback when no key is present.
+- Call `buildReviewerPrompt(context, result)` to build the prompt.
+- Merge `AiReviewResponse.additionalFindings` into the report after deterministic findings.
