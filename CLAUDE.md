@@ -281,6 +281,7 @@ ai-review [path] --file <file> [--ai] [--save-report]
 reviews [path]
 doctor [path]
 capabilities [path]
+capability-check [path] [--script <script>]
 ```
 
 ---
@@ -808,6 +809,7 @@ src/
     repoRulesAgent.ts           - runRepoRulesAgent, buildRepoRulesReport
     doctorAgent.ts              - runDoctorAgent, buildDoctorReport
     capabilitiesAgent.ts        - runCapabilitiesAgent, buildCapabilitiesReport
+    capabilityCheckAgent.ts     - runCapabilityCheckAgent, buildCapabilityCheckReport
 ```
 
 All command flows now live in the agent layer (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`, `suiteInspectorAgent.ts`, `repoRulesAgent.ts`, plus the AI `automationReviewerAgent.ts`). `src/cli/index.ts` is now argument parsing + agent dispatch only.
@@ -1654,6 +1656,49 @@ Strategy rules (driven by the detected signals):
 
 Unit tests in `tests/unit/capabilitiesAgent.test.ts` cover each branch. No
 secrets are printed (cloud detection reads variable names only).
+
+---
+
+## Step 58 — capability-check command (completed)
+
+Added a read-only, **static-analysis** command that evaluates repo-native QA
+automation scripts by EVIDENCE (not exact names) and judges whether they look
+usable/safe to orchestrate:
+
+```bash
+npm run dev -- capability-check <target-repo> [--script <script-name>]
+```
+
+New agent: `src/agents/capabilityCheckAgent.ts` — exports
+`CapabilityCheckOptions`, `CapabilityCheckResult`, `runCapabilityCheckAgent`,
+`buildCapabilityCheckReport`.
+
+Detects candidates by evidence from: package.json scripts (name + command
+signals like `tc`, `generate`, `automation`, `playwright`, `ai`, scripts/ path
+references), generator-like files under `scripts/` that no package script
+references, and soft signals from README / repo-rules ("generate test", "test
+case", …).
+
+Each candidate is classified:
+- **Type**: Test generation / Test execution / AI automation / Test data / seed /
+  Reporting / Unknown QA capability.
+- **Confidence**: High / Medium / Low.
+- **Safety**: Safe to inspect / Needs manual review / Potentially unsafe to
+  execute automatically. Unsafe when the command contains destructive/deploy
+  tokens (`rm`, `del`, `delete`, `clean`, `deploy`, `publish`, `release`, `prod`,
+  `migrate`, `write`, …); test-execution and dry-run/check/list scripts are Safe;
+  generation/AI without a dry-run flag → Needs manual review.
+
+Modes:
+- `--script <name>`: analyzes only that script; if missing, prints a friendly
+  "Script not found" + closest candidates (Levenshtein) and exits 1.
+- no flag: analyzes all candidates. If none, prints the native fallback
+  (`generate`, `ai-review`, `run`, `report`).
+
+Output also includes a `Recommended orchestration:` block. Read-only: never
+executes scripts, modifies files, calls AI providers, or echoes raw command
+values (so secrets in commands are never printed). Unit tests:
+`tests/unit/capabilityCheckAgent.test.ts`.
 
 ---
 

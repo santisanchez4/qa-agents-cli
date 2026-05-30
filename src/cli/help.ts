@@ -23,5 +23,6 @@ Available commands:
   reviews [path]                List saved ai-review reports
   doctor [path]                 Check target repo readiness for qa-agents-cli
   capabilities [path]           Detect existing QA/automation capabilities in a target repo
+  capability-check [path] [--script <script>]  Evaluate repo-native QA automation capabilities
 `);
 }

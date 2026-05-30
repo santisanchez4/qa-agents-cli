@@ -19,6 +19,7 @@ import { runTestRunnerAgent, buildTestRunnerAgentOutput } from '../agents/testRu
 import { runSuiteInspector, buildSuiteInspectorReport } from '../agents/suiteInspectorAgent';
 import { runDoctorAgent, buildDoctorReport } from '../agents/doctorAgent';
 import { runCapabilitiesAgent, buildCapabilitiesReport } from '../agents/capabilitiesAgent';
+import { runCapabilityCheckAgent, buildCapabilityCheckReport } from '../agents/capabilityCheckAgent';
 import { runAutomationGenerator, buildAutomationGeneratorReport } from '../agents/automationGeneratorAgent';
 import { ReviewContext, runAiReview, runAiLayer, buildAiReviewReport } from '../agents/automationReviewerAgent';
 import { saveAiReviewReport } from '../core/reviewReportWriter';
@@ -164,6 +165,16 @@ if (command === 'analyze') {
   const result = runCapabilitiesAgent({ targetRepo: targetPath });
 
   const reportLines = buildCapabilitiesReport(result);
+  if (reportLines.length > 0) console.log('\n' + reportLines.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
+} else if (command === 'capability-check') {
+  const scriptFlagIndex = args.indexOf('--script');
+  const scriptName = scriptFlagIndex !== -1 ? args[scriptFlagIndex + 1] : undefined;
+
+  const result = runCapabilityCheckAgent({ targetRepo: targetPath, scriptName });
+
+  const reportLines = buildCapabilityCheckReport(result);
   if (reportLines.length > 0) console.log('\n' + reportLines.join('\n'));
   for (const errorLine of result.errors) console.error(errorLine);
   if (result.exitCode !== 0) process.exit(result.exitCode);
