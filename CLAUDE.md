@@ -1452,6 +1452,20 @@ modify files, run Playwright, or call AI providers.
 
 ---
 
+## Step 51 — GitHub Actions CI (completed)
+
+Added `.github/workflows/ci.yml` — a simple CI workflow that validates the CLI.
+
+- Name: `CI`. Triggers: `push` and `pull_request`.
+- Single `validate` job on `ubuntu-latest`, Node.js 22, with npm cache.
+- Steps: checkout → setup-node → `npm ci` → `npm run validate`.
+
+CI runs only `npm run validate` (src typecheck, tests typecheck, unit tests).
+It uses **no secrets**, does **not** call AI providers, does **not** run
+Playwright tests, and does **not** require any target repo (e.g. warzone-ui).
+
+---
+
 ## Next planned feature
 
 To be determined based on usage feedback from `ai-review --ai`.
