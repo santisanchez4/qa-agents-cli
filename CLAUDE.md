@@ -1348,6 +1348,42 @@ pre-cleanup output.
 
 ---
 
+## Step 48 — Unit tests (Vitest) (completed)
+
+Added a minimal, deterministic test setup for the most important pure logic.
+No command behavior or output format changed.
+
+Tooling:
+- Dev dependency: `vitest`.
+- Scripts: `npm test` → `vitest run`, `npm run test:watch` → `vitest`,
+  `npm run typecheck:tests` → `tsc --noEmit -p tests/tsconfig.json`
+  (`dev` unchanged).
+- Tests live in `tests/unit/` and import directly from `src/core/*`. Vitest
+  transpiles TS via esbuild; the root `tsconfig.json` still includes only `src/`,
+  so `npx tsc --noEmit` is unaffected. `tests/tsconfig.json` (extends the root,
+  `noEmit`) typechecks the test files for the editor and the
+  `typecheck:tests` script.
+
+Coverage (20 tests, 4 files):
+- `textSanitizer.test.ts` — `stripAnsi` removes ANSI codes; `cleanText` strips +
+  collapses + trims; `normalizeErrorType` maps toHaveURL → URLAssertionError,
+  timeout+locator → LocatorTimeoutError, timeout+navigation →
+  NavigationTimeoutError, 401/403 → AuthorizationError, else keeps original.
+- `aiConfigReport.test.ts` — no provider → disabled / not configured; unsupported
+  provider → unsupported message; deepseek + `DEEPSEEK_API_KEY` → configured /
+  API key SET; asserts the key value is never printed. Snapshots and restores
+  `process.env` per test (no real keys, no provider calls).
+- `repoRulesTemplate.test.ts` — template includes all required sections and
+  contains no project-specific names (warzone/intermex).
+- `reviewReports.test.ts` — `saveAiReviewReport` writes `latest-ai-review.md` +
+  a timestamped copy with identical content; `buildReviewHistoryReport` lists
+  history newest-first, handles the missing folder, and ignores unrelated files.
+  Uses `os.tmpdir()` temp repos, cleaned up after each test.
+
+No Playwright runs, no AI provider calls, no target-repo writes (temp dirs only).
+
+---
+
 ## Next planned feature
 
 To be determined based on usage feedback from `ai-review --ai`.
