@@ -39,7 +39,7 @@ describe('runCapabilitiesAgent', () => {
       'npm run tc:run',
     ]);
     // Generation detected -> orchestrate-first strategy line present.
-    expect(result.strategy.some(s => s.includes('Prefer orchestrating them'))).toBe(true);
+    expect(result.strategy.some(s => s.includes('Prefer orchestrating repo-native generation'))).toBe(true);
   });
 
   it('detects Test execution for test / test:obr', () => {
@@ -92,5 +92,53 @@ describe('runCapabilitiesAgent', () => {
 
     expect(report).toContain('- npm run test:lambda');
     expect(report).not.toContain('shouldNotLeak');
+  });
+});
+
+describe('runCapabilitiesAgent strategy recommendations', () => {
+  it('recommends orchestrating repo-native generation when tc:generate exists', () => {
+    writePackage({ 'tc:generate': 'node gen', test: 'playwright test' });
+    const strategy = runCapabilitiesAgent({ targetRepo: tempRepo }).strategy;
+
+    expect(strategy.some(s => s.includes('Prefer orchestrating repo-native generation'))).toBe(true);
+    expect(strategy.some(s => s.includes('Use qa-agents ai-review after generation'))).toBe(true);
+    // The no-generation guidance must NOT appear.
+    expect(strategy.some(s => s.includes('No repo-native TC generation scripts detected'))).toBe(false);
+  });
+
+  it('recommends qa-agents generate when no generation scripts exist', () => {
+    writePackage({ test: 'playwright test' });
+    const strategy = runCapabilitiesAgent({ targetRepo: tempRepo }).strategy;
+
+    expect(strategy).toContain('No repo-native TC generation scripts detected.');
+    expect(strategy).toContain('Use qa-agents generate for deterministic draft generation.');
+    expect(strategy.some(s => s.includes('Prefer orchestrating repo-native generation'))).toBe(false);
+  });
+
+  it('recommends cloud execution when a lambda target exists', () => {
+    writePackage({ test: 'playwright test' });
+    writeExecConfig({ environments: {}, targets: { local: { script: 'test' }, lambda: { script: 'test' } } });
+    const strategy = runCapabilitiesAgent({ targetRepo: tempRepo }).strategy;
+
+    expect(strategy.some(s => s.includes('Cloud/grid execution detected') && s.includes('lambda'))).toBe(true);
+  });
+
+  it('recommends adding a cloud target when cloud vars exist but no cloud target', () => {
+    writePackage({ test: 'playwright test' });
+    fs.writeFileSync(path.join(tempRepo, '.env'), 'LT_USERNAME=u\nLT_ACCESS_KEY=k\n', 'utf-8');
+    const strategy = runCapabilitiesAgent({ targetRepo: tempRepo }).strategy;
+
+    expect(strategy).toContain('Cloud variables detected but no cloud target found. Add a cloud target to execution-config.json before running cloud tests.');
+    // No cloud target -> the cloud-execution line should not appear.
+    expect(strategy.some(s => s.includes('Cloud/grid execution detected'))).toBe(false);
+  });
+
+  it('recommends initialization when no package.json exists', () => {
+    const strategy = runCapabilitiesAgent({ targetRepo: tempRepo }).strategy;
+
+    expect(strategy).toContain('Initialize or verify the repo structure before generating or running tests.');
+    expect(strategy).toContain('Run qa-agents analyze --save when package metadata becomes available.');
+    // Generation guidance is skipped without a package.json.
+    expect(strategy.some(s => s.includes('TC generation'))).toBe(false);
   });
 });

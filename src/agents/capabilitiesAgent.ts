@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ProjectScanResult } from '../core/projectScanner';
+import { collectCloudVars } from '../core/cloudVars';
 
 /**
  * Use-case orchestration for the `capabilities` command.
@@ -140,11 +141,45 @@ export function runCapabilitiesAgent(options: CapabilitiesAgentOptions): Capabil
     .map(g => ({ title: g.title, items: buckets[g.key] }));
 
   // --- Recommended strategy -------------------------------------------------
+  // Read-only signals used to tailor the recommendations.
+  const hasGeneration = buckets.generation.length > 0;
+  const hasExecution = buckets.execution.length > 0;
+  const cloudTargetNames = buckets.cloud
+    .filter(i => i.startsWith('target: '))
+    .map(i => i.slice('target: '.length));
+  const hasCloudTarget = cloudTargetNames.length > 0;
+  const cloudExecutionDetected = buckets.cloud.length > 0;
+  // Cloud variable names only (never values); used to suggest adding a target.
+  const cloudVarsDetected = [...collectCloudVars(targetRepo).values()].some(s => s.size > 0);
+
   const strategy: string[] = [];
-  if (buckets.generation.length > 0) {
-    strategy.push('Existing generation scripts detected. Prefer orchestrating them before generating duplicate logic.');
+
+  // Generation guidance (skipped entirely when there is no package.json).
+  if (!packageJsonFound) {
+    strategy.push('Initialize or verify the repo structure before generating or running tests.');
+    strategy.push('Run qa-agents analyze --save when package metadata becomes available.');
+  } else if (hasGeneration) {
+    strategy.push('Existing TC generation scripts detected. Prefer orchestrating repo-native generation before adding duplicate generation logic.');
+    strategy.push('Use qa-agents generate only when no repo-native generator fits the use case or when explicitly requested.');
+    strategy.push('Use qa-agents ai-review after generation to review stability, selectors, assertions, and repo-rule compliance.');
+  } else {
+    strategy.push('No repo-native TC generation scripts detected.');
+    strategy.push('Use qa-agents generate for deterministic draft generation.');
+    strategy.push('Use qa-agents ai-review to review generated or existing tests.');
   }
-  strategy.push('Use qa-agents generate when no repo-native generator exists or when explicitly requested.');
+
+  // Cloud / grid guidance.
+  if (cloudExecutionDetected) {
+    const targetSuffix = hasCloudTarget ? ` (${cloudTargetNames.join(', ')})` : '';
+    strategy.push(`Cloud/grid execution detected. Prefer qa-agents run with the detected cloud target${targetSuffix} for repos that require VPN or remote browsers.`);
+  } else if (cloudVarsDetected) {
+    strategy.push('Cloud variables detected but no cloud target found. Add a cloud target to execution-config.json before running cloud tests.');
+  }
+
+  // Execution lifecycle guidance.
+  if (hasExecution) {
+    strategy.push('Use qa-agents run/report/analyze-failures to manage execution lifecycle and results.');
+  }
 
   return {
     ok: true,

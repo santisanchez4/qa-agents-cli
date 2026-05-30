@@ -1628,6 +1628,35 @@ Read-only: never executes scripts, modifies files, prints script command values
 
 ---
 
+## Step 57 — capabilities strategy recommendations (completed)
+
+Improved the `Recommended strategy` section of `capabilities` so it helps
+qa-agents-cli decide whether to use repo-native scripts or qa-agents native
+commands. Capability detection from Step 56 is unchanged; only the strategy
+output is richer. Still read-only.
+
+Strategy rules (driven by the detected signals):
+- **Repo-native generation present** (`tc:*`, `generate`, …): prefer orchestrating
+  repo-native generation; use `qa-agents generate` only when no repo generator
+  fits; use `qa-agents ai-review` after generation.
+- **No repo-native generation**: use `qa-agents generate` for deterministic draft
+  generation; use `qa-agents ai-review` to review generated/existing tests.
+- **Cloud/grid detected** (cloud script or execution-config target): prefer
+  `qa-agents run` with the detected cloud target (named when known) for repos
+  that require VPN or remote browsers.
+- **Cloud variables but no cloud target** (via `collectCloudVars`, names only):
+  recommend adding a cloud target to `execution-config.json` first.
+- **Test execution scripts present**: use `qa-agents run`/`report`/
+  `analyze-failures` for the execution lifecycle.
+- **No package.json**: recommend initializing/verifying the repo and running
+  `qa-agents analyze --save` once package metadata exists (generation guidance is
+  skipped in this case).
+
+Unit tests in `tests/unit/capabilitiesAgent.test.ts` cover each branch. No
+secrets are printed (cloud detection reads variable names only).
+
+---
+
 ## Next planned feature
 
 To be determined based on usage feedback from `ai-review --ai`.
