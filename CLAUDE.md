@@ -770,9 +770,10 @@ src/
     automationGeneratorAgent.ts - runAutomationGenerator, buildAutomationGeneratorReport
     failureAnalyzerAgent.ts     - runFailureAnalyzer, buildFailureAnalyzerReport
     reportAgent.ts              - runReportAgent, buildReportAgentOutput
+    testRunnerAgent.ts          - runTestRunnerAgent, buildTestRunnerAgentOutput
 ```
 
-The `generate`, `analyze-failures`, and `report` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`). The remaining command logic (analyze, run, inspect, init-config, env-check, discover-envs) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
+The `generate`, `analyze-failures`, `report`, and `run` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`). The remaining command logic (analyze, inspect, init-config, env-check, discover-envs) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
 
 ---
 
@@ -1107,6 +1108,51 @@ Behavior preserved exactly:
 - Missing → `No latest run result found. Run tests first.` (exit 1).
 - Malformed/unreadable → `Could not read latest run result.` (exit 1), via the
   Step 40 safe reader.
+
+---
+
+## Step 42 — Formalize Test Runner Agent (completed)
+
+Moved the `run` command orchestration out of `src/cli/index.ts` into an agent
+module, with no behavior change. This is the largest command and covers all
+three modes (`--file`, `--suite`, `--failed`).
+
+New module: `src/agents/testRunnerAgent.ts` — exports:
+
+```txt
+TestRunnerAgentOptions             - { targetRepo, fileFlagPresent, relativeTestFile?,
+                                       isSuite, isFailed, selectedEnv, selectedTarget, varsFileArg? }
+TestRunnerAgentResult              - { ok, exitCode, errors, messages, executed }
+runTestRunnerAgent(options)        - full orchestration: mode validation, --failed
+                                       source-run load, env/target/vars-file handling,
+                                       execution-config usage (or profile testCommand
+                                       fallback), process execution, output streaming,
+                                       and latest-run.json + retry metadata persistence
+buildTestRunnerAgentOutput(result) - returns result.messages for the CLI to print
+```
+
+Architecture boundary:
+- `core/` — unchanged reusable execution helpers (`envLoader`, `executionConfig`,
+  `testRunner.buildRunCommand`, `runResults` parse/save). No low-level logic moved.
+- `agents/testRunnerAgent.ts` — use-case orchestration and the actual process run.
+- `cli/index.ts` — now only parses the run flags, calls `runTestRunnerAgent`,
+  prints returned messages (stdout) / errors (stderr), and exits with
+  `result.exitCode`.
+
+Output-stream design: validation failures and the "No failed tests found in
+latest run." informational case return structured data without printing, so the
+CLI controls those streams. The executed path prints inline (header, loaded env
+files, child stdout/stderr, the `Run result saved at:` notice, and the retry
+notice) because that output is intrinsically interleaved with the spawned test
+process.
+
+Behavior preserved exactly for all three modes:
+- Mode validation (exactly one of `--file`/`--suite`/`--failed`).
+- `--failed` source-run load, no-failures short-circuit (exit 0), and retry metadata.
+- Env/target/vars-file resolution, required-variable checks, and loaded-env-files output.
+- execution-config script selection vs. legacy `testCommand` fallback notice.
+- Mode-specific headers, command echo, child output streaming, `latest-run.json`
+  write, and child exit-code preservation.
 
 ---
 
