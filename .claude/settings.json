@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -ExecutionPolicy Bypass -File scripts/claude/check-claude-md.ps1"
+          }
+        ]
+      }
+    ]
+  }
+}

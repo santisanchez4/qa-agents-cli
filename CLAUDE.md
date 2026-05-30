@@ -1466,6 +1466,32 @@ Playwright tests, and does **not** require any target repo (e.g. warzone-ui).
 
 ---
 
+## Step 52 — CLAUDE.md update reminder hook (completed)
+
+Added a lightweight, **non-blocking** Claude Code hook that reminds you to update
+CLAUDE.md when important project files changed but CLAUDE.md did not.
+
+Files:
+- `scripts/claude/check-claude-md.ps1` — PowerShell (Windows-friendly). Detects
+  both **tracked modifications** (`git diff --name-only HEAD`) and **brand-new
+  untracked files** (`git status --porcelain --untracked-files=all`, `??` lines).
+  If important files changed and `CLAUDE.md` is not among the changes (whether
+  modified or newly untracked), it prints a short reminder listing those files.
+  It **never edits files and always exits 0**, so it cannot block or fail the
+  session. Important paths: `src/agents/*`, `src/core/*`, `src/cli/help.ts`,
+  `src/cli/index.ts`, `package.json`, `package-lock.json`, `tests/*`,
+  `.github/workflows/*`.
+- `.claude/settings.json` — registers the script as a `Stop` hook:
+  `powershell -ExecutionPolicy Bypass -File scripts/claude/check-claude-md.ps1`.
+  (`.claude/settings.local.json` permissions are left untouched.)
+
+Behavior: reminder only when important files changed AND CLAUDE.md was not;
+silent when CLAUDE.md was changed, when only non-important files changed, or when
+nothing changed. Advisory only — it does not block the workflow or auto-edit
+anything.
+
+---
+
 ## Next planned feature
 
 To be determined based on usage feedback from `ai-review --ai`.
