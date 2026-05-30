@@ -945,6 +945,29 @@ Safety:
 
 ---
 
+## Step 37 — Saved reviews history command (completed)
+
+Added a read-only `reviews` command that lists saved ai-review reports.
+
+```bash
+npm run dev -- reviews <target-repo>
+```
+
+New module: `src/core/reviewHistory.ts` — exports
+`buildReviewHistoryReport(targetRepo: string): string[]`.
+
+Behavior:
+- Looks in `<target-repo>/.qa-agents/reviews/`.
+- Prints the latest report (`latest-ai-review.md`) and timestamped history
+  (`ai-review-YYYYMMDD-HHMMSS.md`) sorted newest first.
+- If the reviews folder does not exist (or contains no recognized reports),
+  prints `No saved reviews found.` plus a hint to run `ai-review --save-report`.
+- If `latest-ai-review.md` is missing but timestamped files exist, still lists history.
+- Only lists file names — never reads or prints report contents.
+- Does not modify any files.
+
+---
+
 ## Next planned feature
 
 To be determined based on usage feedback from `ai-review --ai`.

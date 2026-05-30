@@ -17,6 +17,7 @@ import { ExistingPatterns, AutomationPlanResult, collectSpecFiles, buildAutomati
 import { detectRelatedTests } from '../core/duplicateDetection';
 import { ReviewContext, runAiReview, runAiLayer, buildAiReviewReport } from '../agents/automationReviewerAgent';
 import { saveAiReviewReport } from '../core/reviewReportWriter';
+import { buildReviewHistoryReport } from '../core/reviewHistory';
 
 function saveProjectProfile(rootPath: string, analysis: ProjectScanResult): void {
   const qaDir = path.join(rootPath, '.qa-agents');
@@ -994,6 +995,9 @@ if (command === 'analyze') {
 } else if (command === 'ai-config') {
   const configLines = buildAiConfigReport();
   console.log('\n' + configLines.join('\n'));
+} else if (command === 'reviews') {
+  const historyLines = buildReviewHistoryReport(targetPath);
+  console.log('\n' + historyLines.join('\n'));
 } else if (command === 'ai-review') {
   const fileFlagIndex = args.indexOf('--file');
   const relativeTestFile = fileFlagIndex !== -1 ? args[fileFlagIndex + 1] : undefined;
