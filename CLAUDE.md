@@ -769,9 +769,10 @@ src/
     automationReviewerAgent.ts  - runAiReview, runAiLayer, buildAiReviewReport
     automationGeneratorAgent.ts - runAutomationGenerator, buildAutomationGeneratorReport
     failureAnalyzerAgent.ts     - runFailureAnalyzer, buildFailureAnalyzerReport
+    reportAgent.ts              - runReportAgent, buildReportAgentOutput
 ```
 
-The `generate` and `analyze-failures` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`). The remaining command logic (analyze, run, inspect, init-config, env-check, discover-envs, report) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
+The `generate`, `analyze-failures`, and `report` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`). The remaining command logic (analyze, run, inspect, init-config, env-check, discover-envs) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
 
 ---
 
@@ -1076,6 +1077,36 @@ Callers updated:
 
 `run --failed` is intentionally left untouched (run behavior unchanged); it
 already guards its own read.
+
+---
+
+## Step 41 — Formalize Report Agent (completed)
+
+Moved the `report` command orchestration out of `src/cli/index.ts` into an
+agent module, with no behavior change.
+
+New module: `src/agents/reportAgent.ts` — exports:
+
+```txt
+ReportAgentOptions             - { targetRepo }
+ReportAgentResult              - { ok, exitCode, errors, runData }
+runReportAgent(options)        - loads latest-run.json via readLatestRunResultSafe,
+                                 returns the parsed run data (or a friendly error)
+buildReportAgentOutput(result) - delegates to core buildRunReport for the lines
+```
+
+Architecture boundary:
+- `core/reportGenerator.ts` — unchanged reusable, retry-aware report formatting
+  (`buildRunReport`). No formatting moved.
+- `agents/reportAgent.ts` — use-case orchestration (safe load + wire to formatter).
+- `cli/index.ts` — now only calls `runReportAgent`, prints the output to stdout,
+  prints `result.errors` to stderr, and exits with `result.exitCode`.
+
+Behavior preserved exactly:
+- Valid `latest-run.json` → same report output (incl. retry-aware Result section).
+- Missing → `No latest run result found. Run tests first.` (exit 1).
+- Malformed/unreadable → `Could not read latest run result.` (exit 1), via the
+  Step 40 safe reader.
 
 ---
 

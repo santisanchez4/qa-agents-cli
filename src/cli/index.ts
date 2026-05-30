@@ -11,7 +11,7 @@ import { buildRepoRulesTemplate } from '../core/repoRulesTemplate';
 import { buildAiConfigReport } from '../core/aiConfigReport';
 import { RunSummary, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun, readLatestRunResultSafe } from '../core/runResults';
 import { runFailureAnalyzer, buildFailureAnalyzerReport } from '../agents/failureAnalyzerAgent';
-import { buildRunReport } from '../core/reportGenerator';
+import { runReportAgent, buildReportAgentOutput } from '../agents/reportAgent';
 import { buildRunCommand } from '../core/testRunner';
 import { collectSpecFiles } from '../core/testGeneration';
 import { runAutomationGenerator, buildAutomationGeneratorReport } from '../agents/automationGeneratorAgent';
@@ -805,18 +805,12 @@ if (command === 'analyze') {
   const report = buildInspectReport(profile, targetPath);
   console.log('\n' + report);
 } else if (command === 'report') {
-  const read = readLatestRunResultSafe(targetPath);
+  const result = runReportAgent({ targetRepo: targetPath });
 
-  if (!read.ok) {
-    console.error(read.reason === 'missing'
-      ? 'No latest run result found. Run tests first.'
-      : 'Could not read latest run result.');
-    process.exit(1);
-  }
-
-  const runData = read.data!;
-  const reportLines = buildRunReport(runData);
-  console.log('\n' + reportLines.join('\n'));
+  const reportLines = buildReportAgentOutput(result);
+  if (reportLines.length > 0) console.log('\n' + reportLines.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'ai-config') {
   const configLines = buildAiConfigReport();
   console.log('\n' + configLines.join('\n'));
