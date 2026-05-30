@@ -395,8 +395,10 @@ It:
   - App / URL variables
   - User credentials
   - Admin credentials
-  - Cloud execution variables
   - Secrets / API keys
+- Reports **cloud execution variables** in a separate `Cloud execution:` section,
+  grouped by provider (LambdaTest, BrowserStack, Unknown cloud-related). See
+  [Cloud execution variable detection](#cloud-execution-variable-detection).
 - Detects execution targets.
 - Does not modify any config files.
 
@@ -1489,6 +1491,64 @@ Behavior: reminder only when important files changed AND CLAUDE.md was not;
 silent when CLAUDE.md was changed, when only non-important files changed, or when
 nothing changed. Advisory only — it does not block the workflow or auto-edit
 anything.
+
+---
+
+## Cloud execution variable detection
+
+`discover-envs` detects **real** cloud-grid credential variable *names* from the
+target repo, grouped by provider, without inventing names or printing values.
+
+Sources scanned (names only — values are never read or printed):
+- `.env*` keys.
+- `package.json` scripts that reference env vars (`$VAR`, `${VAR}`, `%VAR%`,
+  `process.env.VAR`).
+- `playwright.config.*` (`.ts/.js/.mjs/.cjs`) env-var references.
+- `.qa-agents/execution-config.json` `requiredEnv` arrays (environments + targets).
+
+Provider classification (`classifyCloudVar`):
+- LambdaTest — names starting with `LT_` or `LAMBDATEST` (e.g. `LT_USERNAME`,
+  `LT_ACCESS_KEY`, `LAMBDATEST_KEY`, `LT_GRID_URL`).
+- BrowserStack — names containing `BROWSERSTACK`.
+- Unknown cloud-related — other cloud-grid signals (`SAUCE`, `SAUCELABS`,
+  `SELENIUM`, `GRID`, `HUB`, word-bounded to avoid false matches like `GITHUB`).
+
+Output (only when at least one cloud variable is found):
+
+```txt
+Cloud execution:
+LambdaTest:
+- LT_USERNAME
+- LT_ACCESS_KEY
+
+BrowserStack:
+- BROWSERSTACK_USERNAME
+- BROWSERSTACK_ACCESS_KEY
+
+Unknown cloud-related:
+- <REAL_VAR_NAME>
+```
+
+Cloud variables are listed only in this section (excluded from the normal
+Variable groups). Repos with no cloud variables show no `Cloud execution:`
+section — normal env detection is unchanged. This step does not modify any
+config files and does not change `env-check`.
+
+---
+
+## Step 54 — Cloud variable discovery (completed)
+
+Improved `discover-envs` cloud detection (`src/agents/executionConfigAgent.ts`).
+Previously only four hardcoded names (`LT_USERNAME`, `LT_ACCESS_KEY`,
+`BROWSERSTACK_USERNAME`, `BROWSERSTACK_ACCESS_KEY`) were recognized as cloud
+vars. Now real cloud variable names are detected from `.env*`, package.json
+scripts, `playwright.config.*`, and `execution-config.json` `requiredEnv`, and
+grouped by provider. See [Cloud execution variable detection](#cloud-execution-variable-detection).
+
+No values are ever printed, no names are invented, normal env grouping is
+unchanged, and `execution-config.json` / `env-check` are untouched. Unit tests:
+`tests/unit/discoverEnvsCloud.test.ts` (temp dirs) cover LambdaTest/BrowserStack/
+unknown detection, execution-config sourcing, and that values never appear.
 
 ---
 

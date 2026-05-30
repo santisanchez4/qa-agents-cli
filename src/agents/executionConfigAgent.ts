@@ -222,12 +222,109 @@ const DISCOVER_URL_PATTERNS: Array<{ pattern: string; env: string }> = [
 
 function categorizeVar(key: string): string | null {
   const k = key.toUpperCase();
-  if (/^(LT_USERNAME|LT_ACCESS_KEY|BROWSERSTACK_USERNAME|BROWSERSTACK_ACCESS_KEY)$/.test(k)) return 'Cloud execution';
   if (/^E2E_ADMIN_(EMAIL|PASSWORD)$/.test(k)) return 'Admin credentials';
   if (/^E2E_(EMAIL|PASSWORD)\d*$/.test(k)) return 'User credentials';
   if (/URL|HOST|BASE|ENDPOINT|BACKEND/.test(k)) return 'App/URL';
   if (/API_KEY|TOKEN|SECRET/.test(k)) return 'Secrets/API keys';
   return null;
+}
+
+// --- Cloud execution variable detection -------------------------------------
+// Detects real cloud-grid credential variable NAMES from the repo. Never reads
+// or prints values, and never invents names — only classifies names actually
+// found in env files, scripts, config files, or execution-config.
+
+type CloudProvider = 'LambdaTest' | 'BrowserStack' | 'Unknown';
+
+const CLOUD_PROVIDER_ORDER: CloudProvider[] = ['LambdaTest', 'BrowserStack', 'Unknown'];
+
+const CLOUD_PROVIDER_LABEL: Record<CloudProvider, string> = {
+  LambdaTest: 'LambdaTest',
+  BrowserStack: 'BrowserStack',
+  Unknown: 'Unknown cloud-related',
+};
+
+function classifyCloudVar(key: string): CloudProvider | null {
+  const k = key.toUpperCase();
+  if (/^(LT_|LAMBDATEST)/.test(k)) return 'LambdaTest';
+  if (/BROWSERSTACK/.test(k)) return 'BrowserStack';
+  // Generic cloud-grid signals (word-bounded to avoid matching e.g. GITHUB).
+  if (/(^|_)(SAUCE|SAUCELABS|SELENIUM|GRID|HUB)(_|$)/.test(k)) return 'Unknown';
+  return null;
+}
+
+// Extracts referenced env-variable NAMES (never values) from a text blob such
+// as a package.json script command or a playwright.config file.
+function extractEnvVarNames(text: string): string[] {
+  const names = new Set<string>();
+  const patterns: RegExp[] = [
+    /process\.env\.([A-Za-z_][A-Za-z0-9_]*)/g,
+    /process\.env\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/g,
+    /\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g, // $NAME or ${NAME}
+    /%([A-Za-z_][A-Za-z0-9_]*)%/g,       // %NAME%
+  ];
+  for (const re of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) names.add(m[1]);
+  }
+  return [...names];
+}
+
+// Collects cloud-execution variable names from all repo sources, grouped by
+// provider. Reads only names; values are never inspected or stored.
+function collectCloudVars(targetPath: string, envKeys: Iterable<string>): Map<CloudProvider, Set<string>> {
+  const result = new Map<CloudProvider, Set<string>>();
+  const add = (name: string): void => {
+    const provider = classifyCloudVar(name);
+    if (!provider) return;
+    if (!result.has(provider)) result.set(provider, new Set());
+    result.get(provider)!.add(name);
+  };
+
+  // 1. .env* keys (already parsed by the caller).
+  for (const key of envKeys) add(key);
+
+  // 2. package.json scripts that reference env vars.
+  try {
+    const pkgRaw = readFileIfExists(path.join(targetPath, 'package.json'));
+    if (pkgRaw) {
+      const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, unknown> };
+      for (const cmd of Object.values(pkg.scripts ?? {})) {
+        if (typeof cmd === 'string') for (const n of extractEnvVarNames(cmd)) add(n);
+      }
+    }
+  } catch { /* ignore unreadable/invalid package.json */ }
+
+  // 3. playwright.config.* that references env vars.
+  try {
+    for (const file of fs.readdirSync(targetPath)) {
+      if (!/^playwright\.config\.(ts|js|mjs|cjs)$/.test(file)) continue;
+      const text = readFileIfExists(path.join(targetPath, file));
+      if (text) for (const n of extractEnvVarNames(text)) add(n);
+    }
+  } catch { /* ignore unreadable dir */ }
+
+  // 4. execution-config.json requiredEnv (environments + targets).
+  try {
+    const cfgRaw = readFileIfExists(path.join(targetPath, '.qa-agents', 'execution-config.json'));
+    if (cfgRaw) {
+      const cfg = JSON.parse(cfgRaw) as {
+        environments?: Record<string, { requiredEnv?: unknown }>;
+        targets?: Record<string, { requiredEnv?: unknown }>;
+      };
+      const collectReq = (group: Record<string, { requiredEnv?: unknown }> | undefined): void => {
+        for (const entry of Object.values(group ?? {})) {
+          if (Array.isArray(entry.requiredEnv)) {
+            for (const n of entry.requiredEnv) if (typeof n === 'string') add(n);
+          }
+        }
+      };
+      collectReq(cfg.environments);
+      collectReq(cfg.targets);
+    }
+  } catch { /* ignore unreadable/invalid execution-config.json */ }
+
+  return result;
 }
 
 function buildDiscoverReport(targetPath: string, profile: ProjectScanResult | null): string {
@@ -323,14 +420,15 @@ function buildDiscoverReport(targetPath: string, profile: ProjectScanResult | nu
     lines.push('(none detected)');
   }
 
-  // Variable groups
+  // Variable groups (cloud-execution vars are reported in their own section).
   const varGroups: Record<string, string[]> = {};
   for (const key of allVarKeys) {
+    if (classifyCloudVar(key)) continue;
     const cat = categorizeVar(key);
     if (cat) (varGroups[cat] ??= []).push(key);
   }
 
-  const GROUP_ORDER = ['App/URL', 'User credentials', 'Admin credentials', 'Cloud execution', 'Secrets/API keys'];
+  const GROUP_ORDER = ['App/URL', 'User credentials', 'Admin credentials', 'Secrets/API keys'];
   lines.push('', 'Variable groups:');
   let firstGroup = true;
   for (const group of GROUP_ORDER) {
@@ -342,6 +440,23 @@ function buildDiscoverReport(targetPath: string, profile: ProjectScanResult | nu
     for (const v of vars) lines.push(`- ${v}`);
   }
   if (firstGroup) lines.push('(no recognizable variable patterns found)');
+
+  // Cloud execution variables (names only), grouped by provider. Only shown
+  // when at least one cloud variable is actually found in the repo.
+  const cloudVars = collectCloudVars(targetPath, allVarKeys);
+  const hasCloud = CLOUD_PROVIDER_ORDER.some(p => (cloudVars.get(p)?.size ?? 0) > 0);
+  if (hasCloud) {
+    lines.push('', 'Cloud execution:');
+    let firstProvider = true;
+    for (const provider of CLOUD_PROVIDER_ORDER) {
+      const names = cloudVars.get(provider);
+      if (!names || names.size === 0) continue;
+      if (!firstProvider) lines.push('');
+      firstProvider = false;
+      lines.push(`${CLOUD_PROVIDER_LABEL[provider]}:`);
+      for (const name of [...names].sort()) lines.push(`- ${name}`);
+    }
+  }
 
   // Execution targets from package scripts
   const EXEC_MODE_ORDER = ['local', 'headed', 'ui', 'cloud', 'debug', 'report'];
