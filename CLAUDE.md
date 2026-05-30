@@ -1041,6 +1041,44 @@ Behavior preserved exactly:
 
 ---
 
+## Step 40 — Harden run data readers (completed)
+
+Commands that read `.qa-agents/runs/latest-run.json` now fail gracefully when
+the file is missing, unreadable, or malformed. No schema/run/write changes —
+read-side hardening only.
+
+New reusable reader: `src/core/runResults.ts` →
+`readLatestRunResultSafe(targetRepo): { ok, data?, error?, reason?, path }`.
+It never throws and distinguishes failure modes via `reason`:
+`'missing' | 'unreadable' | 'invalid'` (invalid covers malformed JSON and
+non-object JSON such as `null`, arrays, or primitives).
+
+Callers updated:
+- **analyze-failures** (`failureAnalyzerAgent`):
+  - missing → `No latest run result found. Run tests first with qa-agents run.` (exit 1)
+  - unreadable/invalid → friendly block (exit 1):
+    ```
+    Could not read latest run result:
+    <path>
+
+    Reason:
+    Invalid JSON in latest-run.json.
+
+    Suggested action:
+    Run tests again with:
+    npm run dev -- run <repo> --suite
+    ```
+- **report**: uses the safe reader; preserves its existing messages
+  (`No latest run result found. Run tests first.` / `Could not read latest run result.`)
+  and unchanged successful output.
+- **ai-review**: best-effort load — a missing or malformed `latest-run.json`
+  no longer affects the review; it continues with `Latest run status: N/A`.
+
+`run --failed` is intentionally left untouched (run behavior unchanged); it
+already guards its own read.
+
+---
+
 ## Next planned feature
 
 To be determined based on usage feedback from `ai-review --ai`.

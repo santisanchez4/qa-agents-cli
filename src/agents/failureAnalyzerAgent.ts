@@ -1,6 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-import { FailedTest, LatestRunData } from '../core/runResults';
+import { FailedTest, LatestRunData, readLatestRunResultSafe } from '../core/runResults';
 import { cleanMojibake, classifyFailure, buildRetryContextLines } from '../core/failureAnalyzer';
 
 /**
@@ -23,31 +21,43 @@ export type FailureAnalyzerResult = {
   runData: LatestRunData | null;
 };
 
-function readFileIfExists(filePath: string): string | null {
-  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
-}
-
 export function runFailureAnalyzer(options: FailureAnalyzerOptions): FailureAnalyzerResult {
   const { targetRepo } = options;
-  const runResultPath = path.join(targetRepo, '.qa-agents', 'runs', 'latest-run.json');
-  const runResultRaw = readFileIfExists(runResultPath);
+  const read = readLatestRunResultSafe(targetRepo);
 
-  if (!runResultRaw) {
+  if (!read.ok) {
+    if (read.reason === 'missing') {
+      return {
+        ok: false,
+        exitCode: 1,
+        errors: ['No latest run result found. Run tests first with qa-agents run.'],
+        runData: null,
+      };
+    }
+
     return {
       ok: false,
       exitCode: 1,
-      errors: ['No latest run result found. Run tests first with qa-agents run.'],
+      errors: [[
+        'Could not read latest run result:',
+        read.path,
+        '',
+        'Reason:',
+        read.error ?? 'Invalid JSON in latest-run.json.',
+        '',
+        'Suggested action:',
+        'Run tests again with:',
+        `npm run dev -- run ${targetRepo} --suite`,
+      ].join('\n')],
       runData: null,
     };
   }
-
-  const runData = JSON.parse(runResultRaw) as LatestRunData;
 
   return {
     ok: true,
     exitCode: 0,
     errors: [],
-    runData,
+    runData: read.data!,
   };
 }
 

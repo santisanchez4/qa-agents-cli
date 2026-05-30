@@ -120,6 +120,52 @@ export function parseFailedTests(output: string): FailedTest[] {
   return tests;
 }
 
+export type LatestRunReadReason = 'missing' | 'unreadable' | 'invalid';
+
+export type LatestRunReadResult = {
+  ok: boolean;
+  data?: LatestRunData;
+  error?: string;
+  reason?: LatestRunReadReason;
+  path: string;
+};
+
+/**
+ * Reads <target-repo>/.qa-agents/runs/latest-run.json without throwing.
+ *
+ * Distinguishes the failure modes so callers can react appropriately:
+ * - missing    : the file does not exist
+ * - unreadable : the file exists but could not be read
+ * - invalid    : the file is not valid JSON, or is not a JSON object
+ */
+export function readLatestRunResultSafe(targetRepo: string): LatestRunReadResult {
+  const runResultPath = path.join(targetRepo, '.qa-agents', 'runs', 'latest-run.json');
+
+  if (!fs.existsSync(runResultPath)) {
+    return { ok: false, reason: 'missing', error: 'latest-run.json not found.', path: runResultPath };
+  }
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(runResultPath, 'utf-8');
+  } catch {
+    return { ok: false, reason: 'unreadable', error: 'Could not read latest-run.json.', path: runResultPath };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: 'invalid', error: 'Invalid JSON in latest-run.json.', path: runResultPath };
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, reason: 'invalid', error: 'Invalid JSON in latest-run.json.', path: runResultPath };
+  }
+
+  return { ok: true, data: parsed as LatestRunData, path: runResultPath };
+}
+
 export function saveLatestRun(targetPath: string, data: LatestRunData): void {
   try {
     const runsDir = path.join(targetPath, '.qa-agents', 'runs');

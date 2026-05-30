@@ -9,7 +9,7 @@ import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
 import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
 import { buildRepoRulesTemplate } from '../core/repoRulesTemplate';
 import { buildAiConfigReport } from '../core/aiConfigReport';
-import { RunSummary, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
+import { RunSummary, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun, readLatestRunResultSafe } from '../core/runResults';
 import { runFailureAnalyzer, buildFailureAnalyzerReport } from '../agents/failureAnalyzerAgent';
 import { buildRunReport } from '../core/reportGenerator';
 import { buildRunCommand } from '../core/testRunner';
@@ -805,22 +805,16 @@ if (command === 'analyze') {
   const report = buildInspectReport(profile, targetPath);
   console.log('\n' + report);
 } else if (command === 'report') {
-  const runResultPath = path.join(targetPath, '.qa-agents', 'runs', 'latest-run.json');
-  const runResultRaw = readFileIfExists(runResultPath);
+  const read = readLatestRunResultSafe(targetPath);
 
-  if (!runResultRaw) {
-    console.error('No latest run result found. Run tests first.');
+  if (!read.ok) {
+    console.error(read.reason === 'missing'
+      ? 'No latest run result found. Run tests first.'
+      : 'Could not read latest run result.');
     process.exit(1);
   }
 
-  let runData: LatestRunData;
-  try {
-    runData = JSON.parse(runResultRaw) as LatestRunData;
-  } catch {
-    console.error('Could not read latest run result.');
-    process.exit(1);
-  }
-
+  const runData = read.data!;
   const reportLines = buildRunReport(runData);
   console.log('\n' + reportLines.join('\n'));
 } else if (command === 'ai-config') {
@@ -858,11 +852,9 @@ if (command === 'analyze') {
   const executionConfig = readFileIfExists(path.join(targetPath, '.qa-agents', 'execution-config.json'));
   const fileContent = fs.readFileSync(absoluteTestFile, 'utf-8');
 
-  let latestRun: LatestRunData | null = null;
-  const runResultRaw = readFileIfExists(path.join(targetPath, '.qa-agents', 'runs', 'latest-run.json'));
-  if (runResultRaw) {
-    try { latestRun = JSON.parse(runResultRaw) as LatestRunData; } catch { /* ignore malformed */ }
-  }
+  // Best-effort: a missing or malformed latest-run.json must not fail ai-review.
+  const latestRunRead = readLatestRunResultSafe(targetPath);
+  const latestRun: LatestRunData | null = latestRunRead.ok ? latestRunRead.data! : null;
 
   const reviewContext: ReviewContext = {
     targetRepo: targetPath,
