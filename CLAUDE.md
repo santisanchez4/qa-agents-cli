@@ -1358,8 +1358,9 @@ No command behavior or output format changed.
 Tooling:
 - Dev dependency: `vitest`.
 - Scripts: `npm test` → `vitest run`, `npm run test:watch` → `vitest`,
-  `npm run typecheck:tests` → `tsc --noEmit -p tests/tsconfig.json`
-  (`dev` unchanged).
+  `npm run typecheck` → `tsc --noEmit` (src), `npm run typecheck:tests` →
+  `tsc --noEmit -p tests/tsconfig.json`, `npm run validate` →
+  `typecheck && typecheck:tests && test` (`dev` unchanged).
 - Tests live in `tests/unit/` and import directly from `src/core/*`. Vitest
   transpiles TS via esbuild; the root `tsconfig.json` still includes only `src/`,
   so `npx tsc --noEmit` is unaffected. `tests/tsconfig.json` (extends the root,
@@ -1429,6 +1430,25 @@ Reuses `readLatestRunResultSafe` and `buildAiConfigReport`. Exit code 0
 Unit tests: `tests/unit/doctorAgent.test.ts` (temp dirs only) cover missing repo
 → NOT READY, package.json-only → PARTIAL, profile-without-exec-config → PARTIAL,
 both present → READY, invalid latest-run.json → FAIL/Error, and the report shape.
+
+---
+
+## Step 50 — validate script (completed)
+
+Added a single pre-commit validation script.
+
+```bash
+npm run validate
+```
+
+Scripts added to `package.json` (existing scripts unchanged):
+- `typecheck` → `tsc --noEmit` (src typecheck).
+- `validate` → `npm run typecheck && npm run typecheck:tests && npm test`.
+
+`validate` runs, in order: the `src/` type check, the test type check
+(`tests/tsconfig.json`), and the Vitest unit tests. It fails fast on the first
+non-zero step. **Recommended before commits.** Diagnostics only — it does not
+modify files, run Playwright, or call AI providers.
 
 ---
 
