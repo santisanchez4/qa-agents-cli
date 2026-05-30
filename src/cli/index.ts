@@ -9,8 +9,8 @@ import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
 import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
 import { buildRepoRulesTemplate } from '../core/repoRulesTemplate';
 import { buildAiConfigReport } from '../core/aiConfigReport';
-import { RunSummary, FailedTest, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
-import { FailureClassification, cleanMojibake, classifyFailure, buildRetryContextLines } from '../core/failureAnalyzer';
+import { RunSummary, LatestRunData, RetrySourceRun, RetryMetadata, parsePlaywrightSummary, parseFailedTests, saveLatestRun } from '../core/runResults';
+import { runFailureAnalyzer, buildFailureAnalyzerReport } from '../agents/failureAnalyzerAgent';
 import { buildRunReport } from '../core/reportGenerator';
 import { buildRunCommand } from '../core/testRunner';
 import { collectSpecFiles } from '../core/testGeneration';
@@ -775,77 +775,12 @@ if (command === 'analyze') {
   console.log('\n' + lines.join('\n'));
   process.exit(isReady ? 0 : 1);
 } else if (command === 'analyze-failures') {
-  const runResultPath = path.join(targetPath, '.qa-agents', 'runs', 'latest-run.json');
-  const runResultRaw = readFileIfExists(runResultPath);
+  const result = runFailureAnalyzer({ targetRepo: targetPath });
 
-  if (!runResultRaw) {
-    console.error('No latest run result found. Run tests first with qa-agents run.');
-    process.exit(1);
-  }
-
-  const runData = JSON.parse(runResultRaw) as LatestRunData;
-  const clean = (s: string | null | undefined): string =>
-    s != null ? cleanMojibake(s) : 'N/A';
-
-  const lines: string[] = [
-    'QA Agents - Failure Analysis',
-    '',
-    'Target repo:',
-    runData.targetRepo,
-    '',
-    'Run status:',
-    runData.status,
-    '',
-    'Environment:',
-    runData.environment ?? '(none)',
-    '',
-    'Execution target:',
-    runData.target ?? '(none)',
-    '',
-    'Summary:',
-    `- Total: ${runData.summary?.total ?? 'N/A'}`,
-    `- Passed: ${runData.summary?.passed ?? 'N/A'}`,
-    `- Failed: ${runData.summary?.failed ?? 'N/A'}`,
-    `- Skipped: ${runData.summary?.skipped ?? 'N/A'}`,
-    `- Not run: ${runData.summary?.notRun ?? 'N/A'}`,
-  ];
-
-  lines.push(...buildRetryContextLines(runData));
-
-  const failures: FailedTest[] = runData.failedTests ?? [];
-
-  if (runData.status === 'passed' || failures.length === 0) {
-    if (runData.retry?.isRetry) {
-      lines.push('', 'No failures found in retry run.', 'Original failed tests passed on retry.');
-    } else {
-      lines.push('', 'No failures found in latest run.');
-    }
-  } else {
-    for (let i = 0; i < failures.length; i++) {
-      const f = failures[i];
-      const classification = classifyFailure(f);
-
-      lines.push(
-        '',
-        `Failure ${i + 1}:`,
-        `File: ${clean(f.file)}`,
-        `Title: ${clean(f.title)}`,
-        `Error type: ${f.errorType ?? 'N/A'}`,
-        `Message: ${clean(f.message)}`,
-        `Trace: ${f.trace ?? 'none'}`,
-        `Screenshot: ${f.screenshot ?? 'none'}`,
-        `Video: ${f.video ?? 'none'}`,
-        '',
-        'Classification:',
-        `- Category: ${classification.category}`,
-        `- Likely cause: ${classification.likelyCause}`,
-        '- Suggested actions:',
-        ...classification.suggestedActions.map((a, idx) => `  ${idx + 1}. ${a}`),
-      );
-    }
-  }
-
-  console.log('\n' + lines.join('\n'));
+  const reportLines = buildFailureAnalyzerReport(result);
+  if (reportLines.length > 0) console.log('\n' + reportLines.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'discover-envs') {
   const profilePath = path.join(targetPath, '.qa-agents', 'project-profile.json');
   const profileRaw = readFileIfExists(profilePath);

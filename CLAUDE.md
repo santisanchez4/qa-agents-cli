@@ -768,9 +768,10 @@ src/
   agents/
     automationReviewerAgent.ts  - runAiReview, runAiLayer, buildAiReviewReport
     automationGeneratorAgent.ts - runAutomationGenerator, buildAutomationGeneratorReport
+    failureAnalyzerAgent.ts     - runFailureAnalyzer, buildFailureAnalyzerReport
 ```
 
-The `generate` flow now lives in `src/agents/automationGeneratorAgent.ts`. The remaining command logic (analyze, run, inspect, init-config, env-check, discover-envs, analyze-failures, report) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
+The `generate` and `analyze-failures` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`). The remaining command logic (analyze, run, inspect, init-config, env-check, discover-envs, report) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
 
 ---
 
@@ -1006,6 +1007,37 @@ agent (it was only used by `generate`).
 
 This is the first step of paying down the `src/commands/` split debt — the
 generate flow now lives in an agent rather than inline in the CLI.
+
+---
+
+## Step 39 — Formalize Failure Analyzer Agent (completed)
+
+Moved the `analyze-failures` command orchestration out of `src/cli/index.ts`
+into an agent module, with no behavior change.
+
+New module: `src/agents/failureAnalyzerAgent.ts` — exports:
+
+```txt
+FailureAnalyzerOptions             - { targetRepo }
+FailureAnalyzerResult              - { ok, exitCode, errors, runData }
+runFailureAnalyzer(options)        - loads .qa-agents/runs/latest-run.json,
+                                     returns the parsed run data (or a missing-file error)
+buildFailureAnalyzerReport(result) - formats the retry-aware failure report lines
+```
+
+Architecture boundary:
+- `core/failureAnalyzer.ts` — unchanged reusable classification helpers
+  (`cleanMojibake`, `classifyFailure`, `buildRetryContextLines`). No rules moved.
+- `agents/failureAnalyzerAgent.ts` — use-case orchestration (load run, assemble report).
+- `cli/index.ts` — now only calls `runFailureAnalyzer`, prints the report to
+  stdout, prints `result.errors` to stderr, and exits with `result.exitCode`.
+
+Behavior preserved exactly:
+- Retry-aware output (retry passed → flaky/intermittent or environment timing;
+  retry failed → persistent failure; non-retry unchanged).
+- Cleaned failure messages, failure listing, classification, and the
+  no-failure / retry no-failure messages.
+- Missing `latest-run.json` → stderr error + exit 1.
 
 ---
 
