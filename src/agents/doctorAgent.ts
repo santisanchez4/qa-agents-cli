@@ -3,6 +3,7 @@ import path from 'path';
 import { ProjectScanResult } from '../core/projectScanner';
 import { readLatestRunResultSafe } from '../core/runResults';
 import { buildAiConfigReport } from '../core/aiConfigReport';
+import { CLOUD_PROVIDER_ORDER, CLOUD_PROVIDER_LABEL, collectCloudVars } from '../core/cloudVars';
 
 /**
  * Use-case orchestration for the `doctor` command.
@@ -34,6 +35,13 @@ export type DoctorAgentOptions = {
   targetRepo: string;
 };
 
+export type DoctorCloudInfo = {
+  hasCloudVars: boolean;
+  byProvider: { label: string; names: string[] }[];
+  allNames: string[];
+  targetConfigured: boolean;
+};
+
 export type DoctorAgentResult = {
   ok: boolean;
   exitCode: number;
@@ -44,10 +52,45 @@ export type DoctorAgentResult = {
   findings: DoctorFinding[];
   aiStatus: AiStatus;
   specFiles: number | null;
+  cloud: DoctorCloudInfo;
 };
 
 function fileExists(filePath: string): boolean {
   return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+}
+
+// Target names that indicate a cloud/remote execution target.
+const CLOUD_TARGET_NAMES = ['lambda', 'lambdatest', 'cloud', 'browserstack', 'bs', 'remote'];
+
+function isCloudTargetName(name: string): boolean {
+  const n = name.toLowerCase();
+  if (CLOUD_TARGET_NAMES.includes(n)) return true;
+  // Also match descriptive names containing an unambiguous cloud token.
+  return ['lambda', 'browserstack', 'cloud', 'remote'].some(tok => n.includes(tok));
+}
+
+/**
+ * Detects cloud-execution variables in the repo (names only) and whether the
+ * execution-config defines a likely cloud target. Reads only names — never
+ * variable values.
+ */
+function inspectCloud(targetRepo: string): DoctorCloudInfo {
+  const cloudMap = collectCloudVars(targetRepo);
+
+  const byProvider = CLOUD_PROVIDER_ORDER
+    .map(p => ({ label: CLOUD_PROVIDER_LABEL[p], names: [...(cloudMap.get(p) ?? [])].sort() }))
+    .filter(g => g.names.length > 0);
+
+  const allNames = [...new Set(byProvider.flatMap(g => g.names))].sort();
+
+  let targetConfigured = false;
+  try {
+    const cfgRaw = fs.readFileSync(path.join(targetRepo, '.qa-agents', 'execution-config.json'), 'utf-8');
+    const cfg = JSON.parse(cfgRaw) as { targets?: Record<string, unknown> };
+    targetConfigured = Object.keys(cfg.targets ?? {}).some(isCloudTargetName);
+  } catch { /* no/invalid config -> no cloud target */ }
+
+  return { hasCloudVars: allNames.length > 0, byProvider, allNames, targetConfigured };
 }
 
 /**
@@ -186,6 +229,20 @@ export function runDoctorAgent(options: DoctorAgentOptions): DoctorAgentResult {
   // --- Spec files -----------------------------------------------------------
   const specFiles = profileValid ? (profile?.structure?.specFilesCount ?? null) : null;
 
+  // --- Cloud execution variables vs. configured cloud target ----------------
+  // Diagnostics only: never reads or prints variable values; never modifies the
+  // config. A missing cloud target is a Warning that does NOT affect readiness.
+  const cloud = repoExists ? inspectCloud(targetRepo) : {
+    hasCloudVars: false, byProvider: [], allNames: [], targetConfigured: false,
+  };
+  if (cloud.hasCloudVars && !cloud.targetConfigured) {
+    findings.push({
+      message: 'Cloud execution variables found, but no cloud target is configured.',
+      severity: 'Warning',
+      recommendation: `Add a cloud target (e.g. "lambda") to .qa-agents/execution-config.json using the detected variable names: ${cloud.allNames.join(', ')}`,
+    });
+  }
+
   // --- Overall status -------------------------------------------------------
   let overall: DoctorOverall;
   if (!repoExists) {
@@ -206,6 +263,7 @@ export function runDoctorAgent(options: DoctorAgentOptions): DoctorAgentResult {
     findings,
     aiStatus,
     specFiles,
+    cloud,
   };
 }
 
@@ -229,6 +287,14 @@ export function buildDoctorReport(result: DoctorAgentResult): string[] {
 
   lines.push(`- AI config: ${result.aiStatus}`);
   lines.push(`- Spec files: ${result.specFiles ?? 'N/A'}`);
+
+  // Cloud variables line (names listed in the finding, not here). Only shown
+  // when cloud variables are actually found in the repo.
+  if (result.cloud.hasCloudVars) {
+    const summary = result.cloud.byProvider.map(g => `${g.label} (${g.names.length})`).join(', ');
+    const targetNote = result.cloud.targetConfigured ? '' : ' — no cloud target configured';
+    lines.push(`- Cloud variables: ${summary}${targetNote}`);
+  }
 
   lines.push('', 'Findings:');
   if (result.findings.length === 0) {

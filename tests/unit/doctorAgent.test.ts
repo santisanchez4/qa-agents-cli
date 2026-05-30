@@ -103,3 +103,72 @@ describe('buildDoctorReport', () => {
     expect(report).toContain('Recommended next commands:');
   });
 });
+
+function writeExecConfig(repo: string, config: unknown): void {
+  const qaDir = path.join(repo, '.qa-agents');
+  fs.mkdirSync(qaDir, { recursive: true });
+  fs.writeFileSync(path.join(qaDir, 'execution-config.json'), JSON.stringify(config, null, 2), 'utf-8');
+}
+
+describe('runDoctorAgent cloud-target diagnostics', () => {
+  it('warns when cloud vars exist but no cloud target is configured', () => {
+    fs.writeFileSync(path.join(tempRoot, '.env'), 'LT_USERNAME=cloudUser\nLT_ACCESS_KEY=superSecret123\n', 'utf-8');
+    writeExecConfig(tempRoot, { environments: {}, targets: { local: { script: 'test' } } });
+
+    const result = runDoctorAgent({ targetRepo: tempRoot });
+    const cloudFinding = result.findings.find(f =>
+      f.message === 'Cloud execution variables found, but no cloud target is configured.');
+
+    expect(cloudFinding).toBeDefined();
+    expect(cloudFinding?.severity).toBe('Warning');
+    expect(result.cloud.hasCloudVars).toBe(true);
+    expect(result.cloud.targetConfigured).toBe(false);
+    // Recommendation lists variable NAMES only.
+    expect(cloudFinding?.recommendation).toContain('LT_USERNAME');
+    expect(cloudFinding?.recommendation).toContain('LT_ACCESS_KEY');
+
+    // Values must never be printed in the rendered report.
+    const report = buildDoctorReport(result).join('\n');
+    expect(report).toContain('- Cloud variables: LambdaTest (2)');
+    expect(report).not.toContain('cloudUser');
+    expect(report).not.toContain('superSecret123');
+  });
+
+  it('does not warn when a cloud target (lambda) is configured', () => {
+    fs.writeFileSync(path.join(tempRoot, '.env'), 'LT_USERNAME=cloudUser\nLT_ACCESS_KEY=superSecret123\n', 'utf-8');
+    writeExecConfig(tempRoot, {
+      environments: {},
+      targets: {
+        local: { script: 'test' },
+        lambda: { script: 'test', requiredEnv: ['LT_USERNAME', 'LT_ACCESS_KEY'] },
+      },
+    });
+
+    const result = runDoctorAgent({ targetRepo: tempRoot });
+    const cloudFinding = result.findings.find(f =>
+      f.message === 'Cloud execution variables found, but no cloud target is configured.');
+
+    expect(cloudFinding).toBeUndefined();
+    expect(result.cloud.hasCloudVars).toBe(true);
+    expect(result.cloud.targetConfigured).toBe(true);
+  });
+
+  it('does not change readiness: profile + exec-config present stays READY despite the cloud warning', () => {
+    writeProfile(tempRoot);
+    fs.writeFileSync(path.join(tempRoot, '.env'), 'LT_USERNAME=u\nLT_ACCESS_KEY=k\n', 'utf-8');
+    // exec-config exists but has no cloud target -> warning, but READY stays READY.
+    writeExecConfig(tempRoot, { environments: {}, targets: { local: { script: 'test' } } });
+
+    const result = runDoctorAgent({ targetRepo: tempRoot });
+    expect(result.overall).toBe('READY');
+    expect(result.findings.some(f =>
+      f.message === 'Cloud execution variables found, but no cloud target is configured.')).toBe(true);
+  });
+
+  it('shows no Cloud variables line when there are no cloud vars', () => {
+    fs.writeFileSync(path.join(tempRoot, '.env'), 'BASE_URL=https://example.com\n', 'utf-8');
+    const result = runDoctorAgent({ targetRepo: tempRoot });
+    expect(result.cloud.hasCloudVars).toBe(false);
+    expect(buildDoctorReport(result).join('\n')).not.toContain('Cloud variables:');
+  });
+});

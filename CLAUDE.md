@@ -789,6 +789,8 @@ src/
     aiProvider.ts         - AiProvider types, createDisabledAiProvider, REVIEW_SYSTEM_MESSAGE
     aiProviderResolver.ts - resolveAiProvider (env-driven provider selection)
     reviewerPromptBuilder.ts - buildReviewerPrompt
+    cloudVars.ts          - cloud-var detection (classifyCloudVar, collectCloudVars);
+                            shared by discover-envs and doctor
     providers/            - openAi, anthropic, gemini, deepSeek provider factories
 
   agents/
@@ -1496,6 +1498,9 @@ anything.
 
 ## Cloud execution variable detection
 
+The shared detection logic lives in `src/core/cloudVars.ts` (`classifyCloudVar`,
+`collectCloudVars`) and is used by both `discover-envs` and `doctor`.
+
 `discover-envs` detects **real** cloud-grid credential variable *names* from the
 target repo, grouped by provider, without inventing names or printing values.
 
@@ -1549,6 +1554,36 @@ No values are ever printed, no names are invented, normal env grouping is
 unchanged, and `execution-config.json` / `env-check` are untouched. Unit tests:
 `tests/unit/discoverEnvsCloud.test.ts` (temp dirs) cover LambdaTest/BrowserStack/
 unknown detection, execution-config sourcing, and that values never appear.
+
+---
+
+## Step 55 — doctor cloud-target diagnostics (completed)
+
+`doctor` now uses the Step 54 cloud-variable signal. The detection logic was
+extracted from `executionConfigAgent` into `src/core/cloudVars.ts` and is now
+shared by both `discover-envs` and `doctor` (no duplication).
+
+`doctor` (`src/agents/doctorAgent.ts`):
+- Detects cloud-execution variables in the repo (names only) via `collectCloudVars`.
+- Inspects `execution-config.json` targets for a likely cloud target name
+  (`lambda`, `lambdatest`, `cloud`, `browserstack`, `bs`, `remote`, or any name
+  containing `lambda`/`browserstack`/`cloud`/`remote`).
+- When cloud variables are found, adds a `- Cloud variables: <Provider (n)>` line
+  (with `— no cloud target configured` suffix when applicable).
+- If cloud variables are found but **no** cloud target exists, adds a **Warning**
+  finding: *"Cloud execution variables found, but no cloud target is configured."*
+  with a recommendation listing the detected variable **names** (e.g.
+  `LT_USERNAME, LT_ACCESS_KEY`).
+
+Constraints: never prints variable values, never modifies `execution-config.json`,
+never auto-creates targets, runs no tests. The warning is advisory only — it does
+**not** change readiness (a repo with valid `project-profile.json` +
+`execution-config.json` stays READY). Repos without cloud variables show no
+Cloud variables line and no warning.
+
+Unit tests: `tests/unit/doctorAgent.test.ts` cover cloud vars without a target →
+Warning, cloud vars with a `lambda` target → no warning, readiness stays READY,
+no cloud line when no cloud vars, and that values are never printed.
 
 ---
 
