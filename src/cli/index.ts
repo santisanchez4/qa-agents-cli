@@ -5,8 +5,12 @@ import path from 'path';
 import { ProjectScanResult } from '../core/projectScanner';
 import { runRepoAnalyst, buildRepoAnalystReport } from '../agents/repoAnalystAgent';
 import { printHelp } from './help';
-import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
-import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
+import { classifyTestScript } from '../core/executionConfig';
+import {
+  runInitConfigAgent, buildInitConfigReport,
+  runEnvCheckAgent, buildEnvCheckReport,
+  runDiscoverEnvsAgent, buildDiscoverEnvsReport,
+} from '../agents/executionConfigAgent';
 import { buildRepoRulesTemplate } from '../core/repoRulesTemplate';
 import { buildAiConfigReport } from '../core/aiConfigReport';
 import { LatestRunData, readLatestRunResultSafe } from '../core/runResults';
@@ -145,174 +149,6 @@ function buildInspectReport(profile: ProjectScanResult, targetPath: string): str
 }
 
 
-const DISCOVER_ENV_KEYWORDS = [
-  'local', 'dev', 'development', 'qa', 'uat', 'staging', 'production', 'prod',
-];
-
-// Ordered most-specific first so "production" matches before "prod"
-const DISCOVER_URL_PATTERNS: Array<{ pattern: string; env: string }> = [
-  { pattern: 'localhost',   env: 'local' },
-  { pattern: 'staging',     env: 'staging' },
-  { pattern: 'production',  env: 'production' },
-  { pattern: 'uat',         env: 'uat' },
-  { pattern: 'development', env: 'development' },
-  { pattern: 'qa',          env: 'qa' },
-  { pattern: 'dev',         env: 'dev' },
-  { pattern: 'prod',        env: 'prod' },
-];
-
-function categorizeVar(key: string): string | null {
-  const k = key.toUpperCase();
-  if (/^(LT_USERNAME|LT_ACCESS_KEY|BROWSERSTACK_USERNAME|BROWSERSTACK_ACCESS_KEY)$/.test(k)) return 'Cloud execution';
-  if (/^E2E_ADMIN_(EMAIL|PASSWORD)$/.test(k)) return 'Admin credentials';
-  if (/^E2E_(EMAIL|PASSWORD)\d*$/.test(k)) return 'User credentials';
-  if (/URL|HOST|BASE|ENDPOINT|BACKEND/.test(k)) return 'App/URL';
-  if (/API_KEY|TOKEN|SECRET/.test(k)) return 'Secrets/API keys';
-  return null;
-}
-
-function buildDiscoverReport(targetPath: string, profile: ProjectScanResult | null): string {
-  const lines: string[] = ['QA Agents - Environment Discovery', '', 'Target repo:', targetPath];
-
-  // Collect env files from repo root
-  let envFiles: string[] = [];
-  try {
-    envFiles = fs.readdirSync(targetPath)
-      .filter(f => /^\.env($|\.)/.test(f))
-      .filter(f => fs.statSync(path.join(targetPath, f)).isFile());
-    envFiles.sort((a, b) => (a === '.env' ? -1 : b === '.env' ? 1 : a.localeCompare(b)));
-  } catch { /* unreadable dir */ }
-
-  lines.push('', 'Env files found:');
-  if (envFiles.length > 0) {
-    for (const f of envFiles) lines.push(`- ${f}`);
-  } else {
-    lines.push('(none)');
-  }
-
-  // Parse env files — track keys and values (values only used internally)
-  const envEvidence = new Map<string, Set<string>>(); // env name -> deduplicated reasons
-  const addEvidence = (env: string, reason: string) => {
-    if (!envEvidence.has(env)) envEvidence.set(env, new Set());
-    envEvidence.get(env)!.add(reason);
-  };
-
-  const allVarKeys = new Set<string>();
-  const parsedFiles = new Map<string, Record<string, string>>();
-
-  for (const fileName of envFiles) {
-    try {
-      const parsed = parseEnvFile(path.join(targetPath, fileName));
-      parsedFiles.set(fileName, parsed);
-      for (const key of Object.keys(parsed)) allVarKeys.add(key);
-    } catch { /* skip unreadable */ }
-
-    // Evidence from file name: .env.staging -> "staging"
-    const m = fileName.match(/^\.env\.([a-zA-Z][a-zA-Z0-9]*)(?:\.local)?$/);
-    if (m) addEvidence(m[1].toLowerCase(), `${fileName} file found`);
-  }
-
-  // Evidence from URL-like variable values (never print the value)
-  const URL_LIKE_KEY = /URL|HOST|BASE|ENDPOINT|BACKEND/i;
-  for (const [, parsed] of parsedFiles) {
-    for (const [key, value] of Object.entries(parsed)) {
-      if (!URL_LIKE_KEY.test(key)) continue;
-      const v = value.toLowerCase();
-      for (const { pattern, env } of DISCOVER_URL_PATTERNS) {
-        if (v.includes(pattern)) {
-          const reason = pattern === 'localhost'
-            ? `${key} points to localhost`
-            : `${key} value contains "${pattern}"`;
-          addEvidence(env, reason);
-          break; // first matching pattern wins per variable
-        }
-      }
-    }
-  }
-
-  // Evidence from variable name segments (split on _)
-  for (const key of allVarKeys) {
-    const segments = key.toLowerCase().split('_');
-    for (const kw of DISCOVER_ENV_KEYWORDS) {
-      if (segments.includes(kw)) {
-        addEvidence(kw, `Variable ${key} suggests ${kw}`);
-        break;
-      }
-    }
-  }
-
-  // Evidence from package script names (split on : - _)
-  const packageScripts = profile?.packageScripts ?? {};
-  for (const name of Object.keys(packageScripts)) {
-    const segments = name.toLowerCase().split(/[:_-]/);
-    for (const kw of DISCOVER_ENV_KEYWORDS) {
-      if (segments.includes(kw)) {
-        addEvidence(kw, `Script '${name}' detected`);
-        break;
-      }
-    }
-  }
-
-  // Print possible environments
-  lines.push('', 'Possible environments:');
-  if (envEvidence.size > 0) {
-    for (const [env, reasons] of envEvidence) {
-      lines.push(`- ${env}`, '  Evidence:');
-      for (const reason of reasons) lines.push(`  - ${reason}`);
-    }
-  } else {
-    lines.push('(none detected)');
-  }
-
-  // Variable groups
-  const varGroups: Record<string, string[]> = {};
-  for (const key of allVarKeys) {
-    const cat = categorizeVar(key);
-    if (cat) (varGroups[cat] ??= []).push(key);
-  }
-
-  const GROUP_ORDER = ['App/URL', 'User credentials', 'Admin credentials', 'Cloud execution', 'Secrets/API keys'];
-  lines.push('', 'Variable groups:');
-  let firstGroup = true;
-  for (const group of GROUP_ORDER) {
-    const vars = varGroups[group];
-    if (!vars?.length) continue;
-    if (!firstGroup) lines.push('');
-    firstGroup = false;
-    lines.push(`${group}:`);
-    for (const v of vars) lines.push(`- ${v}`);
-  }
-  if (firstGroup) lines.push('(no recognizable variable patterns found)');
-
-  // Execution targets from package scripts
-  const EXEC_MODE_ORDER = ['local', 'headed', 'ui', 'cloud', 'debug', 'report'];
-  const execModes = new Map<string, string>(); // mode -> first script name found
-  for (const [name, value] of Object.entries(packageScripts)) {
-    const mode = classifyTestScript(value);
-    if (mode && !execModes.has(mode)) execModes.set(mode, name);
-  }
-
-  lines.push('', 'Execution targets:');
-  if (execModes.size > 0) {
-    for (const mode of EXEC_MODE_ORDER) {
-      const scriptName = execModes.get(mode);
-      if (scriptName) lines.push(`- ${mode}: ${scriptName}`);
-    }
-  } else {
-    lines.push('(none detected)');
-  }
-
-  lines.push(
-    '',
-    'Recommended next step:',
-    'Review .qa-agents/execution-config.json and add/update environments based on this discovery.',
-  );
-
-  return lines.join('\n');
-}
-
-
-
 const args = process.argv.slice(2);
 const command = args[0];
 const targetPath = path.resolve(args[1] || process.cwd());
@@ -368,26 +204,12 @@ if (command === 'analyze') {
   for (const errorLine of result.errors) console.error(errorLine);
   process.exit(result.exitCode);
 } else if (command === 'init-config') {
-  const profilePath = path.join(targetPath, '.qa-agents', 'project-profile.json');
-  const profileRaw = readFileIfExists(profilePath);
+  const result = runInitConfigAgent({ targetRepo: targetPath });
 
-  if (!profileRaw) {
-    console.error('Missing project profile. Run analyze --save first.');
-    process.exit(1);
-  }
-
-  const configPath = path.join(targetPath, '.qa-agents', 'execution-config.json');
-
-  if (fs.existsSync(configPath)) {
-    console.error(`execution-config.json already exists. Refusing to overwrite:\n${configPath}`);
-    process.exit(1);
-  }
-
-  const profile: ProjectScanResult = JSON.parse(profileRaw);
-  const config = buildExecutionConfig(profile);
-
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-  console.log(`Execution config created:\n${configPath}`);
+  const out = buildInitConfigReport(result);
+  if (out.length > 0) console.log(out.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'init-rules') {
   const qaDir = path.join(targetPath, '.qa-agents');
   if (!fs.existsSync(qaDir)) {
@@ -412,116 +234,17 @@ if (command === 'analyze') {
   const envFileFlagIndex = args.indexOf('--vars-file');
   const envFileArg = envFileFlagIndex !== -1 ? args[envFileFlagIndex + 1] : undefined;
 
-  const profilePath = path.join(targetPath, '.qa-agents', 'project-profile.json');
-  const configPath = path.join(targetPath, '.qa-agents', 'execution-config.json');
-
-  const profileRaw = readFileIfExists(profilePath);
-  const configRaw = readFileIfExists(configPath);
-
-  if (!profileRaw) {
-    console.error('Missing project profile. Run analyze --save first.');
-    process.exit(1);
-  }
-
-  if (!configRaw) {
-    console.error('Missing execution config. Run init-config first.');
-    process.exit(1);
-  }
-
-  const profile: ProjectScanResult = JSON.parse(profileRaw);
-  const config: ExecutionConfig = JSON.parse(configRaw);
-
-  if (!config.environments[selectedEnv]) {
-    console.error([
-      `Environment not found: ${selectedEnv}`,
-      '',
-      'Available environments:',
-      ...Object.keys(config.environments).map(e => `- ${e}`),
-    ].join('\n'));
-    process.exit(1);
-  }
-
-  if (!config.targets[selectedTarget]) {
-    console.error([
-      `Target not found: ${selectedTarget}`,
-      '',
-      'Available targets:',
-      ...Object.keys(config.targets).map(t => `- ${t}`),
-    ].join('\n'));
-    process.exit(1);
-  }
-
-  // Load env overlay (process.env wins; first file value wins)
-  const envLoadResult = loadEnvOverlay(targetPath, selectedEnv, envFileArg);
-  if (envLoadResult.error) {
-    console.error(envLoadResult.error);
-    process.exit(1);
-  }
-  const envOverlay = envLoadResult.overlay;
-  const loadedFiles = envLoadResult.loadedFiles;
-
-  const envConfig = config.environments[selectedEnv];
-  const targetConfig = config.targets[selectedTarget];
-  const scriptName = targetConfig.script;
-  const pkgManager = profile.packageManager ?? 'npm';
-  const packageScripts = profile.packageScripts ?? {};
-
-  const scriptExists = Boolean(scriptName) && scriptName in packageScripts;
-
-  const requiredVars = [...new Set([
-    ...(envConfig.requiredEnv ?? []),
-    ...(targetConfig.requiredEnv ?? []),
-  ])];
-
-  const varStatuses = requiredVars.map(v => ({ name: v, set: isVarSet(v, envOverlay) }));
-  const isReady = varStatuses.every(s => s.set) && scriptExists;
-
-  const lines: string[] = [
-    'QA Agents - Environment Check',
-    '',
-    'Target repo:',
-    targetPath,
-    '',
-    'Environment:',
+  const result = runEnvCheckAgent({
+    targetRepo: targetPath,
     selectedEnv,
-    '',
-    'Execution target:',
     selectedTarget,
-    '',
-    'Target script:',
-    scriptName ? `${pkgManager} run ${scriptName}` : '(none configured)',
-  ];
+    varsFileArg: envFileArg,
+  });
 
-  if (!scriptExists) {
-    lines.push('', `Configured script not found in package.json: ${scriptName || '(empty)'}`);
-  }
-
-  if (loadedFiles.length > 0) {
-    lines.push('', 'Loaded env files:');
-    for (const f of loadedFiles) lines.push(`- ${f}`);
-  } else {
-    lines.push('', 'Loaded env files: (none)');
-  }
-
-  if (requiredVars.length > 0) {
-    lines.push('', 'Required variables:');
-    for (const { name, set } of varStatuses) {
-      lines.push(`- ${name}: ${set ? 'SET' : 'MISSING'}`);
-    }
-  } else {
-    lines.push('', 'Required variables: (none)');
-  }
-
-  lines.push('', 'Status:', isReady ? 'READY' : 'NOT READY');
-
-  lines.push(
-    '',
-    'Recommended run command:',
-    `npm run dev -- run ${targetPath} --suite --env ${selectedEnv} --target ${selectedTarget}`,
-  );
-
-  console.log('\n' + lines.join('\n'));
-  process.exit(isReady ? 0 : 1);
+  const out = buildEnvCheckReport(result);
+  if (out.length > 0) console.log('\n' + out.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'analyze-failures') {
   const result = runFailureAnalyzer({ targetRepo: targetPath });
 
@@ -530,16 +253,12 @@ if (command === 'analyze') {
   for (const errorLine of result.errors) console.error(errorLine);
   if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'discover-envs') {
-  const profilePath = path.join(targetPath, '.qa-agents', 'project-profile.json');
-  const profileRaw = readFileIfExists(profilePath);
+  const result = runDiscoverEnvsAgent({ targetRepo: targetPath });
 
-  if (!profileRaw) {
-    console.log('Project profile not found. Run analyze --save for better results.');
-  }
-
-  const profile: ProjectScanResult | null = profileRaw ? JSON.parse(profileRaw) : null;
-  const report = buildDiscoverReport(targetPath, profile);
-  console.log('\n' + report);
+  const out = buildDiscoverEnvsReport(result);
+  if (out.length > 0) console.log(out.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'inspect') {
   const profilePath = path.join(targetPath, '.qa-agents', 'project-profile.json');
   const profileRaw = readFileIfExists(profilePath);

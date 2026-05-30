@@ -772,9 +772,12 @@ src/
     reportAgent.ts              - runReportAgent, buildReportAgentOutput
     testRunnerAgent.ts          - runTestRunnerAgent, buildTestRunnerAgentOutput
     repoAnalystAgent.ts         - runRepoAnalyst, buildRepoAnalystReport
+    executionConfigAgent.ts     - runInitConfigAgent/buildInitConfigReport,
+                                  runEnvCheckAgent/buildEnvCheckReport,
+                                  runDiscoverEnvsAgent/buildDiscoverEnvsReport
 ```
 
-The `generate`, `analyze-failures`, `report`, `run`, and `analyze` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`). The remaining command logic (inspect, init-config, env-check, discover-envs) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
+The `generate`, `analyze-failures`, `report`, `run`, `analyze`, `init-config`, `env-check`, and `discover-envs` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`). The remaining command logic (inspect, init-rules) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
 
 ---
 
@@ -1185,6 +1188,51 @@ Behavior preserved exactly:
 - `analyze <repo> --save` → additionally creates `.qa-agents/` if needed, writes
   `project-profile.json` (same schema/content), and prints `Project profile saved at:`.
 - The old local `saveProjectProfile` helper was removed from the CLI (folded into the agent).
+
+---
+
+## Step 44 — Formalize Execution Config Agent (completed)
+
+Moved the three execution-configuration command flows out of `src/cli/index.ts`
+into a single agent module, with no behavior change.
+
+New module: `src/agents/executionConfigAgent.ts` — exports three run/build pairs:
+
+```txt
+InitConfigOptions / InitConfigResult
+runInitConfigAgent(options)        - builds .qa-agents/execution-config.json from
+                                     detected scripts; refuses to overwrite an existing one
+buildInitConfigReport(result)      - "Execution config created: <path>" on success
+
+EnvCheckOptions / EnvCheckResult
+runEnvCheckAgent(options)          - validates config/env/target, loads the env overlay,
+                                     checks required vars (SET/MISSING — never values),
+                                     returns the report and READY/NOT READY exit code
+buildEnvCheckReport(result)        - returns the env-check report lines
+
+DiscoverEnvsOptions / DiscoverEnvsResult
+runDiscoverEnvsAgent(options)      - discovers .env* files, inferred environments,
+                                     variable groups, and execution targets (keys only)
+buildDiscoverEnvsReport(result)    - returns the discovery report lines
+```
+
+Architecture boundary:
+- `core/executionConfig.ts` (`buildExecutionConfig`, `classifyTestScript`) and
+  `core/envLoader.ts` (`parseEnvFile`, `loadEnvOverlay`, `isVarSet`) remain the
+  reusable helpers. No low-level logic moved.
+- `agents/executionConfigAgent.ts` — orchestration for all three commands. The
+  discover-envs internals (`buildDiscoverReport`, `categorizeVar`, and the
+  `DISCOVER_*` heuristics) moved here verbatim from the CLI.
+- `cli/index.ts` — now only parses args, calls the matching run function, prints
+  the report (stdout) / errors (stderr), and exits with `result.exitCode`.
+
+Behavior preserved exactly:
+- init-config: missing profile / existing config → stderr + exit 1; success →
+  `Execution config created:` (exit 0). execution-config.json schema unchanged.
+- env-check: same validation order and messages, SET/MISSING only (no secret
+  values), and READY → exit 0 / NOT READY → exit 1.
+- discover-envs: same discovery output; missing profile prints the stdout notice
+  and still produces the report (exit 0).
 
 ---
 
