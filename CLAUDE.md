@@ -279,6 +279,7 @@ report [path]
 ai-config [path]
 ai-review [path] --file <file> [--ai] [--save-report]
 reviews [path]
+doctor [path]
 ```
 
 ---
@@ -800,6 +801,7 @@ src/
                                   runDiscoverEnvsAgent/buildDiscoverEnvsReport
     suiteInspectorAgent.ts      - runSuiteInspector, buildSuiteInspectorReport
     repoRulesAgent.ts           - runRepoRulesAgent, buildRepoRulesReport
+    doctorAgent.ts              - runDoctorAgent, buildDoctorReport
 ```
 
 All command flows now live in the agent layer (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`, `suiteInspectorAgent.ts`, `repoRulesAgent.ts`, plus the AI `automationReviewerAgent.ts`). `src/cli/index.ts` is now argument parsing + agent dispatch only.
@@ -1381,6 +1383,52 @@ Coverage (20 tests, 4 files):
   Uses `os.tmpdir()` temp repos, cleaned up after each test.
 
 No Playwright runs, no AI provider calls, no target-repo writes (temp dirs only).
+
+---
+
+## Step 49 — doctor command (completed)
+
+Added a read-only health-check command:
+
+```bash
+npm run dev -- doctor <target-repo>
+```
+
+New agent: `src/agents/doctorAgent.ts` — exports `DoctorAgentOptions`,
+`DoctorAgentResult`, `runDoctorAgent(options)`, `buildDoctorReport(result)`.
+
+Diagnostics only — **does not modify files, run Playwright, or call AI
+providers**, and never prints secrets.
+
+Checks performed:
+- Target repo exists (directory).
+- `package.json` found.
+- `.qa-agents/project-profile.json` exists and is valid JSON (also source of
+  spec-file count and tests directory).
+- `.qa-agents/repo-rules.md` exists.
+- `.qa-agents/execution-config.json` exists.
+- `.qa-agents/runs/latest-run.json` via `readLatestRunResultSafe`
+  (OK + last-run status / WARN if missing / FAIL if invalid).
+- AI config status via `buildAiConfigReport` (configured | not configured |
+  disabled) — no API key values printed.
+- Spec files count (from the project profile).
+
+Overall status rules:
+- `NOT READY` if the target repo does not exist.
+- `PARTIAL` if `project-profile.json` (missing/invalid) or
+  `execution-config.json` is missing.
+- `READY` if both exist (and the repo is readable).
+- Missing `repo-rules.md` is a Warning (does not block). AI not configured is
+  Info (does not block).
+
+Output: header, target repo, overall status, the checks block, numbered
+findings (severity + recommendation), and a recommended-next-commands block.
+Reuses `readLatestRunResultSafe` and `buildAiConfigReport`. Exit code 0
+(diagnostics only).
+
+Unit tests: `tests/unit/doctorAgent.test.ts` (temp dirs only) cover missing repo
+→ NOT READY, package.json-only → PARTIAL, profile-without-exec-config → PARTIAL,
+both present → READY, invalid latest-run.json → FAIL/Error, and the report shape.
 
 ---
 

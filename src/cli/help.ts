@@ -21,5 +21,6 @@ Available commands:
   ai-config [path]              Show AI provider configuration diagnostics without calling external APIs
   ai-review [path] --file <file> [--ai] [--save-report]  Review a test file and optionally save the report
   reviews [path]                List saved ai-review reports
+  doctor [path]                 Check target repo readiness for qa-agents-cli
 `);
 }
