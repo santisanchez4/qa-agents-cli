@@ -280,6 +280,7 @@ ai-config [path]
 ai-review [path] --file <file> [--ai] [--save-report]
 reviews [path]
 doctor [path]
+capabilities [path]
 ```
 
 ---
@@ -806,6 +807,7 @@ src/
     suiteInspectorAgent.ts      - runSuiteInspector, buildSuiteInspectorReport
     repoRulesAgent.ts           - runRepoRulesAgent, buildRepoRulesReport
     doctorAgent.ts              - runDoctorAgent, buildDoctorReport
+    capabilitiesAgent.ts        - runCapabilitiesAgent, buildCapabilitiesReport
 ```
 
 All command flows now live in the agent layer (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`, `suiteInspectorAgent.ts`, `repoRulesAgent.ts`, plus the AI `automationReviewerAgent.ts`). `src/cli/index.ts` is now argument parsing + agent dispatch only.
@@ -1584,6 +1586,45 @@ Cloud variables line and no warning.
 Unit tests: `tests/unit/doctorAgent.test.ts` cover cloud vars without a target →
 Warning, cloud vars with a `lambda` target → no warning, readiness stays READY,
 no cloud line when no cloud vars, and that values are never printed.
+
+---
+
+## Step 56 — capabilities command (completed)
+
+Added a read-only `capabilities` command:
+
+```bash
+npm run dev -- capabilities <target-repo>
+```
+
+New agent: `src/agents/capabilitiesAgent.ts` — exports `CapabilitiesAgentOptions`,
+`CapabilitiesAgentResult`, `runCapabilitiesAgent(options)`,
+`buildCapabilitiesReport(result)`.
+
+Purpose: detect what automation/QA capabilities a target repo already supports,
+so future agents can orchestrate existing scripts instead of duplicating them.
+
+Inspects (read-only): `package.json` scripts (falls back to
+`project-profile.json` `packageScripts` when no package.json),
+`.qa-agents/execution-config.json` targets.
+
+Classifies each script name into a single group (priority order, first match):
+Test generation (`tc:*`, `generate`) → AI / automation (`ai` segment, `agent`,
+`codex`, `claude`, `gpt`) → Cloud/grid (`lambda`, `lambdatest`, `browserstack`,
+`cloud`, `remote`) → Test data / seed (`seed`, `data`, `setup`) → Reports
+(`allure`, `report`) → Test execution (`test`, `test:*`, `e2e`, `smoke`,
+`regression`). Cloud targets from execution-config are added as `target: <name>`.
+
+Output: per-group repo capabilities (only non-empty groups), a fixed list of
+qa-agents native capabilities (analyze, inspect, doctor, generate, ai-review,
+run, report, reviews, env-check, discover-envs, init-config, init-rules), and a
+recommended-strategy block (prefers orchestrating existing generation scripts
+when present). If no package.json exists, prints a friendly warning and still
+lists qa-agents capabilities.
+
+Read-only: never executes scripts, modifies files, prints script command values
+(names only), or calls AI providers. Unit tests:
+`tests/unit/capabilitiesAgent.test.ts`.
 
 ---
 

@@ -22,5 +22,6 @@ Available commands:
   ai-review [path] --file <file> [--ai] [--save-report]  Review a test file and optionally save the report
   reviews [path]                List saved ai-review reports
   doctor [path]                 Check target repo readiness for qa-agents-cli
+  capabilities [path]           Detect existing QA/automation capabilities in a target repo
 `);
 }

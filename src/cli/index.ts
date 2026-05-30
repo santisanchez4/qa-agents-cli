@@ -18,6 +18,7 @@ import { runReportAgent, buildReportAgentOutput } from '../agents/reportAgent';
 import { runTestRunnerAgent, buildTestRunnerAgentOutput } from '../agents/testRunnerAgent';
 import { runSuiteInspector, buildSuiteInspectorReport } from '../agents/suiteInspectorAgent';
 import { runDoctorAgent, buildDoctorReport } from '../agents/doctorAgent';
+import { runCapabilitiesAgent, buildCapabilitiesReport } from '../agents/capabilitiesAgent';
 import { runAutomationGenerator, buildAutomationGeneratorReport } from '../agents/automationGeneratorAgent';
 import { ReviewContext, runAiReview, runAiLayer, buildAiReviewReport } from '../agents/automationReviewerAgent';
 import { saveAiReviewReport } from '../core/reviewReportWriter';
@@ -156,6 +157,13 @@ if (command === 'analyze') {
   const result = runDoctorAgent({ targetRepo: targetPath });
 
   const reportLines = buildDoctorReport(result);
+  if (reportLines.length > 0) console.log('\n' + reportLines.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
+} else if (command === 'capabilities') {
+  const result = runCapabilitiesAgent({ targetRepo: targetPath });
+
+  const reportLines = buildCapabilitiesReport(result);
   if (reportLines.length > 0) console.log('\n' + reportLines.join('\n'));
   for (const errorLine of result.errors) console.error(errorLine);
   if (result.exitCode !== 0) process.exit(result.exitCode);
