@@ -776,30 +776,21 @@ src/
                                   runEnvCheckAgent/buildEnvCheckReport,
                                   runDiscoverEnvsAgent/buildDiscoverEnvsReport
     suiteInspectorAgent.ts      - runSuiteInspector, buildSuiteInspectorReport
+    repoRulesAgent.ts           - runRepoRulesAgent, buildRepoRulesReport
 ```
 
-The `generate`, `analyze-failures`, `report`, `run`, `analyze`, `init-config`, `env-check`, `discover-envs`, and `inspect` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`, `suiteInspectorAgent.ts`). The remaining command logic (init-rules) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
+All command flows now live in the agent layer (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`, `suiteInspectorAgent.ts`, `repoRulesAgent.ts`, plus the AI `automationReviewerAgent.ts`). `src/cli/index.ts` is now argument parsing + agent dispatch only.
 
 ---
 
 ## Remaining technical debt
 
-The main remaining debt is splitting `src/cli/index.ts` command blocks into separate command modules:
+Resolved (Steps 38–46). The original debt — splitting `src/cli/index.ts` command
+blocks into separate modules — was paid down by extracting each command's
+orchestration into the `src/agents/` layer instead of a parallel `src/commands/`
+folder. `src/cli/index.ts` is now argument parsing + agent dispatch only.
 
-```txt
-src/commands/
-  analyze.command.ts
-  generate.command.ts
-  inspect.command.ts
-  initConfig.command.ts
-  envCheck.command.ts
-  discoverEnvs.command.ts
-  run.command.ts
-  analyzeFailures.command.ts
-  report.command.ts
-```
-
-Split incrementally, one command at a time.
+See the module structure above for the per-command agent mapping.
 
 ---
 
@@ -1267,6 +1258,38 @@ Behavior preserved exactly:
   (stderr, exit 1).
 
 All command flows except `init-rules` now live in agents.
+
+---
+
+## Step 46 — Formalize Repo Rules Agent (completed)
+
+Moved the `init-rules` command orchestration out of `src/cli/index.ts` into an
+agent module, with no behavior change. This was the last inline command.
+
+New module: `src/agents/repoRulesAgent.ts` — exports:
+
+```txt
+RepoRulesOptions             - { targetRepo }
+RepoRulesResult              - { ok, exitCode, errors, rulesPath, created }
+runRepoRulesAgent(options)   - ensures .qa-agents exists; writes repo-rules.md
+                               from buildRepoRulesTemplate() only if absent (never overwrites)
+buildRepoRulesReport(result) - "Created repo rules file:" / "Repo rules file already exists:" + path
+```
+
+Architecture boundary:
+- `core/repoRulesTemplate.ts` — unchanged reusable template (`buildRepoRulesTemplate`).
+  No template content moved.
+- `agents/repoRulesAgent.ts` — orchestration (ensure dir, conditional write).
+- `cli/index.ts` — now only calls `runRepoRulesAgent`, prints the report, and
+  exits with `result.exitCode`.
+
+Behavior preserved exactly:
+- Existing `repo-rules.md` → `Repo rules file already exists:` + path, file untouched.
+- Missing → `Created repo rules file:` + path, written from the template.
+
+With this step, **every** command flow lives in the agent layer; `src/cli/index.ts`
+is argument parsing + agent dispatch only. The original `src/commands/` split debt
+is resolved via agents.
 
 ---
 

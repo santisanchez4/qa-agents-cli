@@ -10,7 +10,7 @@ import {
   runEnvCheckAgent, buildEnvCheckReport,
   runDiscoverEnvsAgent, buildDiscoverEnvsReport,
 } from '../agents/executionConfigAgent';
-import { buildRepoRulesTemplate } from '../core/repoRulesTemplate';
+import { runRepoRulesAgent, buildRepoRulesReport } from '../agents/repoRulesAgent';
 import { buildAiConfigReport } from '../core/aiConfigReport';
 import { LatestRunData, readLatestRunResultSafe } from '../core/runResults';
 import { runFailureAnalyzer, buildFailureAnalyzerReport } from '../agents/failureAnalyzerAgent';
@@ -90,19 +90,12 @@ if (command === 'analyze') {
   for (const errorLine of result.errors) console.error(errorLine);
   if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'init-rules') {
-  const qaDir = path.join(targetPath, '.qa-agents');
-  if (!fs.existsSync(qaDir)) {
-    fs.mkdirSync(qaDir, { recursive: true });
-  }
+  const result = runRepoRulesAgent({ targetRepo: targetPath });
 
-  const rulesPath = path.join(qaDir, 'repo-rules.md');
-
-  if (fs.existsSync(rulesPath)) {
-    console.log(`Repo rules file already exists:\n${rulesPath}`);
-  } else {
-    fs.writeFileSync(rulesPath, buildRepoRulesTemplate(), 'utf-8');
-    console.log(`Created repo rules file:\n${rulesPath}`);
-  }
+  const out = buildRepoRulesReport(result);
+  if (out.length > 0) console.log(out.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'env-check') {
   const envFlagIndex = args.indexOf('--env');
   const selectedEnv = envFlagIndex !== -1 ? args[envFlagIndex + 1] : 'local';
