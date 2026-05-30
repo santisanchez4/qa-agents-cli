@@ -775,9 +775,10 @@ src/
     executionConfigAgent.ts     - runInitConfigAgent/buildInitConfigReport,
                                   runEnvCheckAgent/buildEnvCheckReport,
                                   runDiscoverEnvsAgent/buildDiscoverEnvsReport
+    suiteInspectorAgent.ts      - runSuiteInspector, buildSuiteInspectorReport
 ```
 
-The `generate`, `analyze-failures`, `report`, `run`, `analyze`, `init-config`, `env-check`, and `discover-envs` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`). The remaining command logic (inspect, init-rules) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
+The `generate`, `analyze-failures`, `report`, `run`, `analyze`, `init-config`, `env-check`, `discover-envs`, and `inspect` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`, `suiteInspectorAgent.ts`). The remaining command logic (init-rules) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
 
 ---
 
@@ -1233,6 +1234,39 @@ Behavior preserved exactly:
   values), and READY → exit 0 / NOT READY → exit 1.
 - discover-envs: same discovery output; missing profile prints the stdout notice
   and still produces the report (exit 0).
+
+---
+
+## Step 45 — Formalize Suite Inspector Agent (completed)
+
+Moved the `inspect` command orchestration out of `src/cli/index.ts` into an
+agent module, with no behavior change.
+
+New module: `src/agents/suiteInspectorAgent.ts` — exports:
+
+```txt
+SuiteInspectorOptions             - { targetRepo }
+SuiteInspectorResult              - { ok, exitCode, errors, profile, targetRepo }
+runSuiteInspector(options)        - loads project-profile.json (missing → error + exit 1)
+buildSuiteInspectorReport(result) - lists spec files grouped by folder, support
+                                    folders, and execution modes from package scripts
+```
+
+Architecture boundary:
+- `core/` — unchanged reusable helpers (`collectSpecFiles`, `classifyTestScript`).
+- `agents/suiteInspectorAgent.ts` — orchestration plus the inspect-specific
+  helpers that previously lived in the CLI (`detectSupportFoldersInDir` and the
+  `INSPECT_SUPPORT_FOLDER_NAMES` set moved here verbatim).
+- `cli/index.ts` — now only calls `runSuiteInspector`, prints the report to
+  stdout, errors to stderr, and exits with `result.exitCode`.
+
+Behavior preserved exactly:
+- Same `QA Agents - Suite Inspector` report (profile summary, spec files grouped
+  by folder, support folders, execution modes, recommended next commands).
+- Missing project profile → `Missing project profile. Run analyze --save first.`
+  (stderr, exit 1).
+
+All command flows except `init-rules` now live in agents.
 
 ---
 
