@@ -268,6 +268,7 @@ generate [path] --spec <file> --write
 generate [path] --spec <file> --write --force
 inspect [path]
 init-config [path]
+init-rules [path]
 env-check [path] --env <env> --target <target> [--vars-file <file>]
 discover-envs [path]
 run [path] --file <file> [--env <env>] [--target <target>] [--vars-file <file>]
@@ -275,6 +276,9 @@ run [path] --suite [--env <env>] [--target <target>] [--vars-file <file>]
 run [path] --failed [--env <env>] [--target <target>] [--vars-file <file>]
 analyze-failures [path]
 report [path]
+ai-config [path]
+ai-review [path] --file <file> [--ai] [--save-report]
+reviews [path]
 ```
 
 ---
@@ -747,23 +751,42 @@ Run Report Generator        -> report
 
 ## Current module structure
 
+Layer roles:
+- `cli/` — argument parsing and dispatch only. Each command parses flags, calls
+  the matching agent (or a core diagnostic), prints stdout/stderr, and exits with
+  the agent's exit code.
+- `agents/` — use-case orchestration (one flow per command).
+- `core/` — reusable logic, helpers, templates, and AI providers. No command
+  orchestration.
+
 ```txt
 src/
   cli/
-    index.ts              - command parsing and orchestration
+    index.ts              - argument parsing and dispatch
     help.ts               - printHelp()
 
   core/
-    projectScanner.ts     - repo analysis
+    projectScanner.ts     - repo analysis (scanProject)
     executionConfig.ts    - ExecutionConfig types, buildExecutionConfig, classifyTestScript
     envLoader.ts          - parseEnvFile, loadEnvOverlay, isVarSet
     testRunner.ts         - buildRunCommand, RunCommand type
-    runResults.ts         - LatestRunData types, parsePlaywrightSummary, parseFailedTests, saveLatestRun
+    runResults.ts         - LatestRunData types, parsePlaywrightSummary, parseFailedTests,
+                            saveLatestRun, readLatestRunResultSafe
     failureAnalyzer.ts    - classifyFailure, cleanMojibake, buildRetryContextLines
     duplicateDetection.ts - detectRelatedTests
-    testGeneration.ts     - buildAutomationPlan, buildTestCode, buildDeterministicTestDraft, collectSpecFiles
+    testGeneration.ts     - buildAutomationPlan, buildTestCode, buildDeterministicTestDraft,
+                            detectExistingPatterns, collectSpecFiles
     textSanitizer.ts      - stripAnsi, cleanText, normalizeErrorType
     reportGenerator.ts    - buildRunReport
+    repoRulesTemplate.ts  - buildRepoRulesTemplate
+    reviewRules.ts        - deterministic review checks (checkStability, checkSelectors, ...)
+    reviewReportWriter.ts - saveAiReviewReport
+    reviewHistory.ts      - buildReviewHistoryReport
+    aiConfigReport.ts     - buildAiConfigReport
+    aiProvider.ts         - AiProvider types, createDisabledAiProvider, REVIEW_SYSTEM_MESSAGE
+    aiProviderResolver.ts - resolveAiProvider (env-driven provider selection)
+    reviewerPromptBuilder.ts - buildReviewerPrompt
+    providers/            - openAi, anthropic, gemini, deepSeek provider factories
 
   agents/
     automationReviewerAgent.ts  - runAiReview, runAiLayer, buildAiReviewReport
@@ -1290,6 +1313,38 @@ Behavior preserved exactly:
 With this step, **every** command flow lives in the agent layer; `src/cli/index.ts`
 is argument parsing + agent dispatch only. The original `src/commands/` split debt
 is resolved via agents.
+
+---
+
+## Step 47 — Final architecture cleanup (completed)
+
+A safe verification/cleanup pass after all command flows moved to agents. **No
+behavior changed** — no command output, exit code, schema, provider behavior, or
+generated content was modified.
+
+Findings and actions:
+- `src/cli/index.ts` — already clean. Verified it is parse + dispatch only: every
+  import is used, the only helper (`readFileIfExists`) is still used by the
+  `ai-review` context build, and no dead code remains. No changes.
+  (Per-command stdout uses each command's original leading-newline convention;
+  these were intentionally left untouched to preserve exact output.)
+- `src/agents/*.ts` — naming is already consistent (`runXAgent`/`run...` +
+  `buildXReport`/`buildXOutput`). Automated scan found no unused named or default
+  imports. No changes.
+- `src/core/*.ts` — every "externally unused" export flagged by scanning is in
+  fact referenced inside its own file (return-type annotations, schema
+  composition like `RunSummary`, or internal calls like `detectExistingPatterns`).
+  Nothing was definitely dead, so no exports were removed (avoids churn/risk).
+- `help.ts` — confirmed all 13 commands and their flags are listed accurately.
+  No changes.
+- `CLAUDE.md` — updated the architecture section: documented the cli/agents/core
+  layer roles, corrected the `cli/index.ts` description to "argument parsing and
+  dispatch", and completed the `core/` module list (AI providers, review/report
+  helpers) that earlier steps had added but not listed.
+
+Net: documentation-only updates. `npx tsc --noEmit` passes; smoke tests
+(`analyze`, `inspect`, `report`, `reviews`, `ai-config`, `ai-review`) match
+pre-cleanup output.
 
 ---
 
