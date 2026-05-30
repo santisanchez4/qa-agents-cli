@@ -13,8 +13,8 @@ import { RunSummary, FailedTest, LatestRunData, RetrySourceRun, RetryMetadata, p
 import { FailureClassification, cleanMojibake, classifyFailure, buildRetryContextLines } from '../core/failureAnalyzer';
 import { buildRunReport } from '../core/reportGenerator';
 import { buildRunCommand } from '../core/testRunner';
-import { ExistingPatterns, AutomationPlanResult, collectSpecFiles, buildAutomationPlan, buildTestCode, buildDeterministicTestDraft } from '../core/testGeneration';
-import { detectRelatedTests } from '../core/duplicateDetection';
+import { collectSpecFiles } from '../core/testGeneration';
+import { runAutomationGenerator, buildAutomationGeneratorReport } from '../agents/automationGeneratorAgent';
 import { ReviewContext, runAiReview, runAiLayer, buildAiReviewReport } from '../agents/automationReviewerAgent';
 import { saveAiReviewReport } from '../core/reviewReportWriter';
 import { buildReviewHistoryReport } from '../core/reviewHistory';
@@ -32,13 +32,6 @@ function saveProjectProfile(rootPath: string, analysis: ProjectScanResult): void
 function readFileIfExists(filePath: string): string | null {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
 }
-
-
-function extractFirstHeading(markdown: string): string {
-  const match = markdown.match(/^#{1,6}\s+(.+)$/m);
-  return match ? match[1].trim() : '(no heading found)';
-}
-
 
 
 const INSPECT_SUPPORT_FOLDER_NAMES = new Set([
@@ -347,118 +340,21 @@ if (command === 'analyze') {
 } else if (command === 'generate') {
   // npm consumes --dry-run as its own flag and exposes it via env instead of argv
   const isDryRun = args.includes('--dry-run') || process.env['npm_config_dry_run'] === 'true';
-  const isWrite = args.includes('--write');
-  const isForce = args.includes('--force');
   const specFlagIndex = args.indexOf('--spec');
   const specArg = specFlagIndex !== -1 ? args[specFlagIndex + 1] : undefined;
 
-  const profilePath = path.join(targetPath, '.qa-agents', 'project-profile.json');
-  const rulesPath = path.join(targetPath, '.qa-agents', 'repo-rules.md');
-  const specPath = specArg
-    ? path.isAbsolute(specArg) ? specArg : path.join(targetPath, specArg)
-    : undefined;
+  const result = runAutomationGenerator({
+    targetRepo: targetPath,
+    specArg,
+    dryRun: isDryRun,
+    write: args.includes('--write'),
+    force: args.includes('--force'),
+  });
 
-  const profileRaw = readFileIfExists(profilePath);
-  const rulesRaw = specPath ? readFileIfExists(rulesPath) : null;
-  const specRaw = specPath ? readFileIfExists(specPath) : null;
-
-  let hasError = false;
-
-  if (!profileRaw) {
-    console.error('Missing project profile. Run analyze --save first.');
-    hasError = true;
-  }
-
-  const rulesRawResolved = readFileIfExists(rulesPath);
-  if (!rulesRawResolved) {
-    console.error('Missing repo rules file.');
-    hasError = true;
-  }
-
-  if (!specArg) {
-    console.error('Missing --spec argument.');
-    hasError = true;
-  } else if (!specRaw) {
-    console.error('Missing spec file.');
-    hasError = true;
-  }
-
-  if (hasError) process.exit(1);
-
-  const profile: ProjectScanResult = JSON.parse(profileRaw!);
-  const specTitle = extractFirstHeading(specRaw!);
-  const { plan, suggestedFilePath, targetFolder, e2eBase, testsDir, patterns } =
-    buildAutomationPlan(profile, specTitle, specPath!, targetPath);
-
-  console.log('\nQA Agents - Generate Test\n');
-  console.log(plan);
-
-  if (isDryRun && isWrite) {
-    console.log('\nBoth --dry-run and --write were provided. Running in dry-run mode only.');
-  }
-
-  const relatedTests = (isDryRun || isWrite)
-    ? detectRelatedTests(targetPath, suggestedFilePath, targetFolder, e2eBase, testsDir, specTitle, specRaw!)
-    : [];
-
-  if (isDryRun) {
-    if (relatedTests.length > 0) {
-      console.log([
-        '',
-        'Duplicate risk warning:',
-        'Related existing test files found:',
-        ...relatedTests.map(f => `- ${f}`),
-      ].join('\n'));
-    }
-
-    const draft = buildDeterministicTestDraft(profile, specTitle, suggestedFilePath, patterns);
-    if (draft) {
-      console.log('\n' + draft);
-    } else {
-      console.error('Dry-run requested, but no draft could be generated.');
-    }
-  } else if (isWrite) {
-    const frameworks = profile.detectedFrameworks ?? [];
-    if (!frameworks.includes('Playwright')) {
-      console.error('Write mode currently supports Playwright only.');
-      process.exit(1);
-    }
-
-    const absoluteFilePath = path.resolve(targetPath, suggestedFilePath);
-    const code = buildTestCode(specTitle, suggestedFilePath, patterns);
-
-    // 1. Related-test guard — must run before any filesystem writes
-    if (relatedTests.length > 0 && !isForce) {
-      console.error([
-        'Related existing test files found. Refusing to auto-create a possible duplicate.',
-        '',
-        'Related files:',
-        ...relatedTests.map(f => `- ${f}`),
-        '',
-        'Suggested action:',
-        'Review the existing test and decide whether to update it, add a new scenario, or create a separate test intentionally.',
-      ].join('\n'));
-      process.exit(1);
-    }
-
-    if (relatedTests.length > 0 && isForce) {
-      console.log('\nForce enabled. Creating file despite related tests.');
-    }
-
-    // 2. Overwrite guard
-    if (fs.existsSync(absoluteFilePath)) {
-      console.error(`Target test file already exists. Refusing to overwrite:\n${absoluteFilePath}`);
-      process.exit(1);
-    }
-
-    // 3. Write
-    fs.mkdirSync(path.dirname(absoluteFilePath), { recursive: true });
-    fs.writeFileSync(absoluteFilePath, code + '\n', 'utf-8');
-
-    const testCmd = profile.testCommand ?? 'npx playwright test';
-    console.log(`\nGenerated test file created:\n${absoluteFilePath}`);
-    console.log(`\nNext step:\nRun:\n  cd ${targetPath}\n  ${testCmd} -- ${suggestedFilePath}`);
-  }
+  const reportLines = buildAutomationGeneratorReport(result);
+  if (reportLines.length > 0) console.log(reportLines.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'run') {
   const fileFlagIndex = args.indexOf('--file');
   const relativeTestFile = fileFlagIndex !== -1 ? args[fileFlagIndex + 1] : undefined;

@@ -764,9 +764,13 @@ src/
     testGeneration.ts     - buildAutomationPlan, buildTestCode, buildDeterministicTestDraft, collectSpecFiles
     textSanitizer.ts      - stripAnsi, cleanText, normalizeErrorType
     reportGenerator.ts    - buildRunReport
+
+  agents/
+    automationReviewerAgent.ts  - runAiReview, runAiLayer, buildAiReviewReport
+    automationGeneratorAgent.ts - runAutomationGenerator, buildAutomationGeneratorReport
 ```
 
-Command logic (analyze, generate, run, inspect, init-config, env-check, discover-envs, analyze-failures, report) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` is the remaining technical debt.
+The `generate` flow now lives in `src/agents/automationGeneratorAgent.ts`. The remaining command logic (analyze, run, inspect, init-config, env-check, discover-envs, analyze-failures, report) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
 
 ---
 
@@ -965,6 +969,43 @@ Behavior:
 - If `latest-ai-review.md` is missing but timestamped files exist, still lists history.
 - Only lists file names — never reads or prints report contents.
 - Does not modify any files.
+
+---
+
+## Step 38 — Formalize Automation Generator Agent (completed)
+
+Moved the `generate` command orchestration out of `src/cli/index.ts` into an
+agent module, with no behavior change.
+
+New module: `src/agents/automationGeneratorAgent.ts` — exports:
+
+```txt
+AutomationGeneratorMode          - 'plan' | 'dry-run' | 'write'
+AutomationGeneratorOptions       - { targetRepo, specArg?, dryRun, write, force }
+AutomationGeneratorResult        - structured outcome (ok, exitCode, errors,
+                                   plan, relatedTests, draft, forceNotice,
+                                   writeSuccess, dryRunWriteConflict, mode)
+runAutomationGenerator(options)  - loads profile/rules/spec, builds the plan,
+                                   detects duplicates, generates the deterministic
+                                   draft/code, and performs the controlled write
+buildAutomationGeneratorReport(result) - formats the result into stdout lines
+```
+
+Architecture boundary reinforced:
+- `core/` — reusable helpers (`testGeneration.ts`, `duplicateDetection.ts`).
+- `agents/` — use-case orchestration (`automationGeneratorAgent.ts`).
+- `cli/` — `index.ts` now only parses flags, calls `runAutomationGenerator`,
+  prints the report to stdout, prints `result.errors` to stderr, and exits with
+  `result.exitCode`.
+
+Behavior preserved exactly for all modes:
+`generate --spec`, `--dry-run`, `--write`, and `--write --force`. Validation
+errors, the duplicate-block message, the overwrite guard, the force notice, and
+the success/next-step output are unchanged. `extractFirstHeading` moved into the
+agent (it was only used by `generate`).
+
+This is the first step of paying down the `src/commands/` split debt — the
+generate flow now lives in an agent rather than inline in the CLI.
 
 ---
 
