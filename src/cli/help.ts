@@ -24,5 +24,6 @@ Available commands:
   doctor [path]                 Check target repo readiness for qa-agents-cli
   capabilities [path]           Detect existing QA/automation capabilities in a target repo
   capability-check [path] [--script <script>]  Evaluate repo-native QA automation capabilities
+  normalize-spec [path] --input <file> --id <id>  Normalize a local spec file into .qa-agents/specs/TC-<id>.md
 `);
 }

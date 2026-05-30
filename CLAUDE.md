@@ -282,6 +282,7 @@ reviews [path]
 doctor [path]
 capabilities [path]
 capability-check [path] [--script <script>]
+normalize-spec [path] --input <file> --id <id>
 ```
 
 ---
@@ -793,6 +794,10 @@ src/
     reviewerPromptBuilder.ts - buildReviewerPrompt
     cloudVars.ts          - cloud-var detection (classifyCloudVar, collectCloudVars);
                             shared by discover-envs and doctor
+    specNormalizer.ts     - deterministic spec parsing (normalizeId, extractTitle,
+                            extractSteps, extractExpectedResults, parseSpec)
+    specTemplate.ts       - buildSpecMarkdown (standardized internal spec)
+    specFileWriter.ts     - writeSpecFile (.qa-agents/specs/, refuses overwrite)
     providers/            - openAi, anthropic, gemini, deepSeek provider factories
 
   agents/
@@ -810,6 +815,7 @@ src/
     doctorAgent.ts              - runDoctorAgent, buildDoctorReport
     capabilitiesAgent.ts        - runCapabilitiesAgent, buildCapabilitiesReport
     capabilityCheckAgent.ts     - runCapabilityCheckAgent, buildCapabilityCheckReport
+    specNormalizerAgent.ts      - runSpecNormalizerAgent, buildSpecNormalizerReport
 ```
 
 All command flows now live in the agent layer (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`, `suiteInspectorAgent.ts`, `repoRulesAgent.ts`, plus the AI `automationReviewerAgent.ts`). `src/cli/index.ts` is now argument parsing + agent dispatch only.
@@ -1699,6 +1705,47 @@ Output also includes a `Recommended orchestration:` block. Read-only: never
 executes scripts, modifies files, calls AI providers, or echoes raw command
 values (so secrets in commands are never printed). Unit tests:
 `tests/unit/capabilityCheckAgent.test.ts`.
+
+---
+
+## Step 59 — Spec Intake / Normalizer (completed)
+
+Added a local, deterministic Spec Intake / Normalizer that converts a local
+input file into a standardized internal spec under the target repo:
+
+```bash
+npm run dev -- normalize-spec <target-repo> --input <file> --id TC-12345
+```
+
+Output: `<target-repo>/.qa-agents/specs/TC-<number>.md`.
+
+Files added:
+- `src/core/specNormalizer.ts` — pure parsing: `normalizeId` (`12345` / `TC-12345`
+  / `tc_12345` / `TC12345` → `TC-12345`; invalid → null), `extractTitle`,
+  `extractSteps`, `extractExpectedResults`, `extractSummary`, `parseSpec`. Strips
+  a leading UTF-8 BOM so Windows-created files parse correctly.
+- `src/core/specTemplate.ts` — `buildSpecMarkdown` (Metadata / Summary /
+  Preconditions / Steps / Expected Results / Notes / Raw Input).
+- `src/core/specFileWriter.ts` — `writeSpecFile` (creates `.qa-agents/specs/`,
+  refuses to overwrite).
+- `src/agents/specNormalizerAgent.ts` — `runSpecNormalizerAgent` (async),
+  `buildSpecNormalizerReport`.
+- Tests: `tests/unit/specNormalizer.test.ts`, `tests/unit/specNormalizerAgent.test.ts`.
+
+Parsing (first version, deterministic): title = first heading → first non-empty
+line → `Untitled Spec`; steps = numbered lines (`1.`, `2)`) and `Step:`/`Action:`
+lines (else `TBD`); expected results = `Expected:` / `Expected Result:` /
+`Then` lines (else `TBD`); original input preserved under `Raw Input`.
+
+Validation/errors (each exits non-zero with a friendly message): missing target
+repo / `--input` / `--id`, invalid id, target repo path missing, input file
+missing, unsupported extension (only `.md`/`.txt`), and refuses to overwrite an
+existing normalized spec.
+
+Safety: local-only and deterministic — no AI, no network, no Playwright, no
+external connectors (Azure/Jira/Trello are out of scope for this step). It does
+not modify the input or any other repo files beyond writing the new spec, and
+tests use temp dirs only.
 
 ---
 
