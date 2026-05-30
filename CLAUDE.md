@@ -911,6 +911,40 @@ Does not call any external API. Does not print API key values.
 
 ---
 
+## Step 36 — Save report support for ai-review (completed)
+
+Added an optional `--save-report` flag to the `ai-review` command.
+
+```bash
+npm run dev -- ai-review <target-repo> --file <test-file> [--ai] [--save-report]
+```
+
+New module: `src/core/reviewReportWriter.ts` — exports
+`saveAiReviewReport(targetRepo, reportLines): { latestPath: string; timestampedPath: string }`.
+
+Behavior with `--save-report`:
+- Ensures `<target-repo>/.qa-agents/reviews/` exists.
+- Writes the full report to `latest-ai-review.md` (overwritten each save).
+- Writes a preserved timestamped copy `ai-review-YYYYMMDD-HHMMSS.md`.
+- Saved content matches the console report exactly.
+- After saving, prints:
+
+```txt
+Review report saved:
+<path to latest-ai-review.md>
+
+Timestamped copy:
+<path to ai-review-YYYYMMDD-HHMMSS.md>
+```
+
+Safety:
+- Reports are saved only when `--save-report` is passed.
+- Reports live under `.qa-agents/reviews/`; `latest-ai-review.md` is overwritten while timestamped copies are preserved.
+- The reviewed test file and other target repo source files are never modified.
+- `ai-review` behavior is unchanged without `--save-report`, and `--ai` behavior is unchanged.
+
+---
+
 ## Next planned feature
 
 To be determined based on usage feedback from `ai-review --ai`.

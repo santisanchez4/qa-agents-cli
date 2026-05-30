@@ -16,6 +16,7 @@ import { buildRunCommand } from '../core/testRunner';
 import { ExistingPatterns, AutomationPlanResult, collectSpecFiles, buildAutomationPlan, buildTestCode, buildDeterministicTestDraft } from '../core/testGeneration';
 import { detectRelatedTests } from '../core/duplicateDetection';
 import { ReviewContext, runAiReview, runAiLayer, buildAiReviewReport } from '../agents/automationReviewerAgent';
+import { saveAiReviewReport } from '../core/reviewReportWriter';
 
 function saveProjectProfile(rootPath: string, analysis: ProjectScanResult): void {
   const qaDir = path.join(rootPath, '.qa-agents');
@@ -997,6 +998,7 @@ if (command === 'analyze') {
   const fileFlagIndex = args.indexOf('--file');
   const relativeTestFile = fileFlagIndex !== -1 ? args[fileFlagIndex + 1] : undefined;
   const useAi = args.includes('--ai');
+  const saveReport = args.includes('--save-report');
 
   if (!relativeTestFile) {
     console.error('Missing --file argument. Provide a test file path relative to the target repo.');
@@ -1044,6 +1046,14 @@ if (command === 'analyze') {
     const aiLayer = await runAiLayer(reviewContext, reviewResult);
     const reviewLines = buildAiReviewReport(reviewContext, reviewResult, aiLayer);
     console.log('\n' + reviewLines.join('\n'));
+
+    if (saveReport) {
+      const { latestPath, timestampedPath } = saveAiReviewReport(targetPath, reviewLines);
+      console.log('\nReview report saved:');
+      console.log(latestPath);
+      console.log('\nTimestamped copy:');
+      console.log(timestampedPath);
+    }
   })().catch(err => {
     console.error('ai-review failed unexpectedly:', (err as Error).message);
     process.exit(1);

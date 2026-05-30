@@ -19,6 +19,6 @@ Available commands:
   env-check [path] --env <env> --target <target> [--vars-file <file>]  Validate environment variables and execution target
   report [path]                 Print executive report from latest run result
   ai-config [path]              Show AI provider configuration diagnostics without calling external APIs
-  ai-review [path] --file <file> [--ai]  Review a test file and optionally add AI-assisted recommendations
+  ai-review [path] --file <file> [--ai] [--save-report]  Review a test file and optionally save the report
 `);
 }
