@@ -771,9 +771,10 @@ src/
     failureAnalyzerAgent.ts     - runFailureAnalyzer, buildFailureAnalyzerReport
     reportAgent.ts              - runReportAgent, buildReportAgentOutput
     testRunnerAgent.ts          - runTestRunnerAgent, buildTestRunnerAgentOutput
+    repoAnalystAgent.ts         - runRepoAnalyst, buildRepoAnalystReport
 ```
 
-The `generate`, `analyze-failures`, `report`, and `run` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`). The remaining command logic (analyze, inspect, init-config, env-check, discover-envs) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
+The `generate`, `analyze-failures`, `report`, `run`, and `analyze` flows now live in agents (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`). The remaining command logic (inspect, init-config, env-check, discover-envs) still lives in `src/cli/index.ts`. Splitting these into `src/commands/` (or further agents) is the remaining technical debt.
 
 ---
 
@@ -1153,6 +1154,37 @@ Behavior preserved exactly for all three modes:
 - execution-config script selection vs. legacy `testCommand` fallback notice.
 - Mode-specific headers, command echo, child output streaming, `latest-run.json`
   write, and child exit-code preservation.
+
+---
+
+## Step 43 — Formalize Repo Analyst Agent (completed)
+
+Moved the `analyze` command orchestration out of `src/cli/index.ts` into an
+agent module, with no behavior change.
+
+New module: `src/agents/repoAnalystAgent.ts` — exports:
+
+```txt
+RepoAnalystOptions             - { targetRepo, save }
+RepoAnalystResult              - { ok, exitCode, errors, profile, savedPath }
+runRepoAnalyst(options)        - runs scanProject and, with --save, ensures
+                                 .qa-agents exists and writes project-profile.json
+buildRepoAnalystReport(result) - formats the analysis (and save notice) lines
+```
+
+Architecture boundary:
+- `core/projectScanner.ts` — unchanged, generic, reusable detection (language,
+  frameworks, package manager, test command, scripts, important files, structure).
+  No detection logic moved.
+- `agents/repoAnalystAgent.ts` — use-case orchestration (scan + optional save).
+- `cli/index.ts` — now only parses the path and `--save`, calls `runRepoAnalyst`,
+  prints the report to stdout, errors to stderr, and exits with `result.exitCode`.
+
+Behavior preserved exactly:
+- `analyze <repo>` → `QA Agents - Repo Analysis` header + the same JSON profile.
+- `analyze <repo> --save` → additionally creates `.qa-agents/` if needed, writes
+  `project-profile.json` (same schema/content), and prints `Project profile saved at:`.
+- The old local `saveProjectProfile` helper was removed from the CLI (folded into the agent).
 
 ---
 

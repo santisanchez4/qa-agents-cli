@@ -2,7 +2,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { scanProject, ProjectScanResult } from '../core/projectScanner';
+import { ProjectScanResult } from '../core/projectScanner';
+import { runRepoAnalyst, buildRepoAnalystReport } from '../agents/repoAnalystAgent';
 import { printHelp } from './help';
 import { parseEnvFile, loadEnvOverlay, isVarSet } from '../core/envLoader';
 import { ExecutionTarget, ExecutionEnvironment, ExecutionConfig, classifyTestScript, buildExecutionConfig } from '../core/executionConfig';
@@ -17,16 +18,6 @@ import { runAutomationGenerator, buildAutomationGeneratorReport } from '../agent
 import { ReviewContext, runAiReview, runAiLayer, buildAiReviewReport } from '../agents/automationReviewerAgent';
 import { saveAiReviewReport } from '../core/reviewReportWriter';
 import { buildReviewHistoryReport } from '../core/reviewHistory';
-
-function saveProjectProfile(rootPath: string, analysis: ProjectScanResult): void {
-  const qaDir = path.join(rootPath, '.qa-agents');
-  if (!fs.existsSync(qaDir)) {
-    fs.mkdirSync(qaDir);
-  }
-  const profilePath = path.join(qaDir, 'project-profile.json');
-  fs.writeFileSync(profilePath, JSON.stringify(analysis, null, 2), 'utf-8');
-  console.log(`\nProject profile saved at:\n${profilePath}`);
-}
 
 function readFileIfExists(filePath: string): string | null {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
@@ -328,14 +319,12 @@ const targetPath = path.resolve(args[1] || process.cwd());
 const shouldSave = args.includes('--save');
 
 if (command === 'analyze') {
-  const result = scanProject(targetPath);
+  const result = runRepoAnalyst({ targetRepo: targetPath, save: shouldSave });
 
-  console.log('\nQA Agents - Repo Analysis\n');
-  console.log(JSON.stringify(result, null, 2));
-
-  if (shouldSave) {
-    saveProjectProfile(targetPath, result);
-  }
+  const reportLines = buildRepoAnalystReport(result);
+  if (reportLines.length > 0) console.log(reportLines.join('\n'));
+  for (const errorLine of result.errors) console.error(errorLine);
+  if (result.exitCode !== 0) process.exit(result.exitCode);
 } else if (command === 'generate') {
   // npm consumes --dry-run as its own flag and exposes it via env instead of argv
   const isDryRun = args.includes('--dry-run') || process.env['npm_config_dry_run'] === 'true';
