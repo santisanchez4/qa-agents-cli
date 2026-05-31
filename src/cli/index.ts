@@ -51,9 +51,19 @@ if (command === 'analyze') {
   const specFlagIndex = args.indexOf('--spec');
   const specArg = specFlagIndex !== -1 ? args[specFlagIndex + 1] : undefined;
 
+  // --tc <id> resolves to .qa-agents/specs/TC-<id>.md. A present-but-valueless
+  // flag is passed as '' so the agent can report a friendly "missing value".
+  const tcFlagIndex = args.indexOf('--tc');
+  let tcId: string | undefined;
+  if (tcFlagIndex !== -1) {
+    const tcValue = args[tcFlagIndex + 1];
+    tcId = tcValue && !tcValue.startsWith('--') ? tcValue : '';
+  }
+
   const result = runAutomationGenerator({
     targetRepo: targetPath,
     specArg,
+    tcId,
     dryRun: isDryRun,
     write: args.includes('--write'),
     force: args.includes('--force'),

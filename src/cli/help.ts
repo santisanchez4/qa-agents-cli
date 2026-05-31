@@ -4,10 +4,11 @@ Available commands:
 
   analyze [path]                Analyze a local automation repository
   analyze [path] --save         Save analysis to .qa-agents/project-profile.json
-  generate [path] --spec <file> Load a local test spec for future automation generation
-  generate [path] --spec <file> --dry-run  Preview generated test without writing files
-  generate [path] --spec <file> --write    Generate and write the test file
-  generate [path] --spec <file> --write --force  Write even if related tests exist
+  generate [path] --spec <file> Load a local test spec for automation generation
+  generate [path] --tc <id>     Load a normalized spec by Test Case id (.qa-agents/specs/TC-<id>.md)
+  generate [path] (--spec <file> | --tc <id>) --dry-run  Preview generated test without writing files
+  generate [path] (--spec <file> | --tc <id>) --write    Generate and write the test file
+  generate [path] (--spec <file> | --tc <id>) --write --force  Write even if related tests exist
   run [path] --file <file> [--env <env>] [--target <target>] [--vars-file <file>]
   run [path] --suite [--env <env>] [--target <target>] [--vars-file <file>]
   run [path] --failed [--env <env>] [--target <target>] [--vars-file <file>]  Re-run failed test files from latest run

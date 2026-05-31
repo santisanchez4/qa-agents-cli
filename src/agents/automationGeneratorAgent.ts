@@ -7,6 +7,7 @@ import {
   buildDeterministicTestDraft,
 } from '../core/testGeneration';
 import { detectRelatedTests } from '../core/duplicateDetection';
+import { normalizeId } from '../core/specNormalizer';
 
 /**
  * Use-case orchestration for the `generate` command.
@@ -22,6 +23,8 @@ export type AutomationGeneratorMode = 'plan' | 'dry-run' | 'write';
 export type AutomationGeneratorOptions = {
   targetRepo: string;
   specArg?: string;
+  /** Test Case id (e.g. 253628 / TC-253628 / tc_253628); resolves to a normalized spec. */
+  tcId?: string;
   dryRun: boolean;
   write: boolean;
   force: boolean;
@@ -46,6 +49,8 @@ export type AutomationGeneratorResult = {
   draft: string | null;
   forceNotice: boolean;
   writeSuccess: AutomationGeneratorWriteSuccess | null;
+  /** Relative spec path resolved from --tc (null when --tc was not used). */
+  resolvedTcSpec: string | null;
 };
 
 function readFileIfExists(filePath: string): string | null {
@@ -69,26 +74,62 @@ function emptyResult(mode: AutomationGeneratorMode): AutomationGeneratorResult {
     draft: null,
     forceNotice: false,
     writeSuccess: null,
+    resolvedTcSpec: null,
   };
 }
 
 export function runAutomationGenerator(
   options: AutomationGeneratorOptions
 ): AutomationGeneratorResult {
-  const { targetRepo, specArg, dryRun, write, force } = options;
+  const { targetRepo, specArg, tcId, dryRun, write, force } = options;
   const mode: AutomationGeneratorMode = dryRun ? 'dry-run' : write ? 'write' : 'plan';
+
+  const result = emptyResult(mode);
+
+  // Resolve --tc into a normalized spec path (mutually exclusive with --spec).
+  // This only reads an already-normalized local spec; it never creates one.
+  let effectiveSpecArg = specArg;
+  if (tcId !== undefined) {
+    if (specArg !== undefined) {
+      result.errors.push('Both --spec and --tc were provided. Use only one.');
+      return result;
+    }
+    if (!tcId.trim()) {
+      result.errors.push('Missing value for --tc. Provide a Test Case id, e.g. --tc 253628.');
+      return result;
+    }
+    const normalizedId = normalizeId(tcId);
+    if (!normalizedId) {
+      result.errors.push(`Invalid --tc id: ${tcId}. Expected a numeric id like 253628, TC-253628, or tc_253628.`);
+      return result;
+    }
+    const relativeSpec = `.qa-agents/specs/${normalizedId}.md`;
+    const absoluteSpec = path.join(targetRepo, '.qa-agents', 'specs', `${normalizedId}.md`);
+    if (!fs.existsSync(absoluteSpec)) {
+      const numericId = normalizedId.replace(/^TC-/, '');
+      result.errors.push([
+        `Normalized spec not found for ${normalizedId}:`,
+        absoluteSpec,
+        '',
+        'Create it first with one of:',
+        `  npm run dev -- import-spec ${targetRepo} --provider azure --id ${numericId}`,
+        `  npm run dev -- normalize-spec ${targetRepo} --input <file> --id ${numericId}`,
+      ].join('\n'));
+      return result;
+    }
+    effectiveSpecArg = relativeSpec;
+    result.resolvedTcSpec = relativeSpec;
+  }
 
   const profilePath = path.join(targetRepo, '.qa-agents', 'project-profile.json');
   const rulesPath = path.join(targetRepo, '.qa-agents', 'repo-rules.md');
-  const specPath = specArg
-    ? path.isAbsolute(specArg) ? specArg : path.join(targetRepo, specArg)
+  const specPath = effectiveSpecArg
+    ? path.isAbsolute(effectiveSpecArg) ? effectiveSpecArg : path.join(targetRepo, effectiveSpecArg)
     : undefined;
 
   const profileRaw = readFileIfExists(profilePath);
   const specRaw = specPath ? readFileIfExists(specPath) : null;
   const rulesRawResolved = readFileIfExists(rulesPath);
-
-  const result = emptyResult(mode);
 
   if (!profileRaw) {
     result.errors.push('Missing project profile. Run analyze --save first.');
@@ -96,8 +137,8 @@ export function runAutomationGenerator(
   if (!rulesRawResolved) {
     result.errors.push('Missing repo rules file.');
   }
-  if (!specArg) {
-    result.errors.push('Missing --spec argument.');
+  if (!effectiveSpecArg) {
+    result.errors.push('Missing --spec or --tc argument.');
   } else if (!specRaw) {
     result.errors.push('Missing spec file.');
   }
@@ -196,7 +237,13 @@ export function runAutomationGenerator(
 export function buildAutomationGeneratorReport(result: AutomationGeneratorResult): string[] {
   if (!result.ok || result.plan === null) return [];
 
-  const lines: string[] = ['', 'QA Agents - Generate Test', '', result.plan];
+  const lines: string[] = ['', 'QA Agents - Generate Test', ''];
+
+  if (result.resolvedTcSpec) {
+    lines.push('Resolved TC spec:', result.resolvedTcSpec, '');
+  }
+
+  lines.push(result.plan);
 
   if (result.dryRunWriteConflict) {
     lines.push('', 'Both --dry-run and --write were provided. Running in dry-run mode only.');

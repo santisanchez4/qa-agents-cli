@@ -266,6 +266,7 @@ generate [path] --spec <file>
 generate [path] --spec <file> --dry-run
 generate [path] --spec <file> --write
 generate [path] --spec <file> --write --force
+generate [path] --tc <id> [--dry-run | --write [--force]]
 inspect [path]
 init-config [path]
 init-rules [path]
@@ -1849,6 +1850,47 @@ Azure step parser limitations (best-effort, no XML library): it regex-matches
 action/expected result; deeply nested formatting, attachments, shared steps,
 and parameter data tables are not interpreted; unrecognized content is preserved
 as a single best-effort action / in `rawText` rather than failing.
+
+---
+
+## Step 62 — generate --tc (completed)
+
+`generate` can now consume an already-normalized spec by Test Case id, without
+passing the spec file path:
+
+```bash
+npm run dev -- generate <target-repo> --tc 253628 --dry-run
+npm run dev -- generate <target-repo> --tc TC-253628 --write
+npm run dev -- generate <target-repo> --tc tc_253628
+```
+
+`--tc <id>` is normalized with the Step 59 `normalizeId` rules and resolved to
+`<target-repo>/.qa-agents/specs/TC-<id>.md`, then fed into the **existing**
+`generate --spec` flow (no generator duplication). The report shows the resolved
+path:
+
+```txt
+Resolved TC spec:
+.qa-agents/specs/TC-253628.md
+```
+
+Implementation: `AutomationGeneratorOptions.tcId?` + `resolvedTcSpec` on the
+result; `runAutomationGenerator` resolves `--tc` to an effective spec arg before
+the normal spec-loading path (`src/agents/automationGeneratorAgent.ts`, reusing
+`core/specNormalizer.normalizeId`). The CLI stays thin (parses `--tc`; a
+present-but-valueless flag is passed as `''`).
+
+Validation (friendly errors, exit non-zero; **no spec file is created**):
+- `--spec` and `--tc` together → "Both --spec and --tc were provided. Use only one."
+- `--tc` with no value → "Missing value for --tc."
+- invalid id → "Invalid --tc id: …".
+- resolved spec missing → "Normalized spec not found for TC-…" with `import-spec`
+  / `normalize-spec` suggestions.
+
+This step is local/read-only: it only reads an already-normalized spec — no
+Azure/Jira/Trello, network, AI, or Playwright. Existing `generate --spec`
+behavior (plan / --dry-run / --write / --write --force, and the dry-run+write
+conflict notice) is unchanged. Tests: `tests/unit/automationGeneratorTc.test.ts`.
 
 ---
 
