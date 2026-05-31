@@ -16,6 +16,7 @@ import {
   runAiLayer,
   buildAiReviewReport,
 } from './automationReviewerAgent';
+import { runTestRunnerAgent, TestRunnerAgentResult } from './testRunnerAgent';
 
 /**
  * Use-case orchestration for the `generate` command.
@@ -42,6 +43,20 @@ export type AutomationGeneratorOptions = {
   ai?: boolean;
   /** Only with review: persist the review report via the review report writer. */
   saveReview?: boolean;
+  /** Only with --write: run the generated test via the test runner agent. */
+  run?: boolean;
+  selectedEnv?: string;
+  selectedTarget?: string;
+  varsFileArg?: string;
+};
+
+/** Plan describing how to run the generated test (consumed by runGeneratedTest). */
+export type GeneratedRunPlan = {
+  targetRepo: string;
+  relativeTestFile: string;
+  selectedEnv: string;
+  selectedTarget: string;
+  varsFileArg?: string;
 };
 
 export type AutomationGeneratorWriteSuccess = {
@@ -71,6 +86,8 @@ export type AutomationGeneratorResult = {
   reviewSavedPath?: string;
   /** Why review was requested but not run (e.g. non-Playwright generation). */
   reviewSkippedReason?: string;
+  /** Set when --run should execute the generated test (after a successful write). */
+  runPlanned?: GeneratedRunPlan | null;
 };
 
 function readFileIfExists(filePath: string): string | null {
@@ -113,6 +130,16 @@ export async function runAutomationGenerator(
   }
   if (options.saveReview && !options.review) {
     result.errors.push('The --save-review flag requires --review.');
+    return result;
+  }
+
+  // Run-flag dependencies (run only ever executes a freshly written test).
+  if (options.run && dryRun) {
+    result.errors.push('The --run flag cannot be used with --dry-run.');
+    return result;
+  }
+  if (options.run && !write) {
+    result.errors.push('The --run flag requires --write.');
     return result;
   }
 
@@ -277,7 +304,38 @@ export async function runAutomationGenerator(
     }
   }
 
+  // ── Optional run of the generated test (only after a successful write) ──
+  // Planned here; executed by the CLI via runGeneratedTest AFTER the generation/
+  // review report is printed, so the run output appears after it.
+  if (options.run && result.writeSuccess) {
+    result.runPlanned = {
+      targetRepo,
+      relativeTestFile: result.writeSuccess.suggestedFilePath,
+      selectedEnv: options.selectedEnv ?? 'local',
+      selectedTarget: options.selectedTarget ?? 'local',
+      varsFileArg: options.varsFileArg,
+    };
+  }
+
   return result;
+}
+
+/**
+ * Executes a planned run of the freshly generated test by delegating to the
+ * existing test runner agent (no run logic duplicated; execution stays in
+ * testRunnerAgent). Runs only the single generated file in --file mode.
+ */
+export function runGeneratedTest(plan: GeneratedRunPlan): TestRunnerAgentResult {
+  return runTestRunnerAgent({
+    targetRepo: plan.targetRepo,
+    fileFlagPresent: true,
+    relativeTestFile: plan.relativeTestFile,
+    isSuite: false,
+    isFailed: false,
+    selectedEnv: plan.selectedEnv,
+    selectedTarget: plan.selectedTarget,
+    varsFileArg: plan.varsFileArg,
+  });
 }
 
 type GeneratedReviewInput = {

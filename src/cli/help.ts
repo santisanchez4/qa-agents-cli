@@ -10,6 +10,7 @@ Available commands:
   generate [path] (--spec <file> | --tc <id>) --write    Generate and write the test file
   generate [path] (--spec <file> | --tc <id>) --write --force  Write even if related tests exist
   generate [path] ... --review [--ai] [--save-review]  Review the generated test (AI only with --ai)
+  generate [path] ... --write --run [--env <env>] [--target <target>] [--vars-file <file>]  Run the written test
   run [path] --file <file> [--env <env>] [--target <target>] [--vars-file <file>]
   run [path] --suite [--env <env>] [--target <target>] [--vars-file <file>]
   run [path] --failed [--env <env>] [--target <target>] [--vars-file <file>]  Re-run failed test files from latest run

@@ -268,6 +268,7 @@ generate [path] --spec <file> --write
 generate [path] --spec <file> --write --force
 generate [path] --tc <id> [--dry-run | --write [--force]]
 generate [path] (--spec <file> | --tc <id>) [--dry-run | --write] --review [--ai] [--save-review]
+generate [path] (--spec <file> | --tc <id>) --write --run [--env <env>] [--target <target>] [--vars-file <file>]
 inspect [path]
 init-config [path]
 init-rules [path]
@@ -1941,6 +1942,48 @@ Safety:
 Tests: `tests/unit/generateReview.test.ts` (temp dirs; AI provider env cleared so
 no real provider is called). Step 62 generator tests updated to `await` the now
 -async function.
+
+---
+
+## Step 64 — Run generated test (completed)
+
+After a `--write` generation, `generate` can optionally run the generated test
+via the existing test runner agent:
+
+```bash
+npm run dev -- generate <repo> --tc 253628 --write --run --env QA --target lambda
+npm run dev -- generate <repo> --spec .qa-agents/specs/TC-253628.md --write --review --run --env staging --target chromium
+```
+
+Options added to `AutomationGeneratorOptions`: `run?`, `selectedEnv?`,
+`selectedTarget?`, `varsFileArg?`. Result adds `runPlanned?` (a `GeneratedRunPlan`
+or null).
+
+Design (output ordering): the test runner streams its output inline, so the run
+must execute **after** the generation/review report is printed. Therefore
+`runAutomationGenerator` only *plans* the run (`result.runPlanned`) on a
+successful write; the new `runGeneratedTest(plan)` wrapper executes it by
+delegating to `runTestRunnerAgent` (`--file` mode, single generated file). The
+CLI prints the report, then — if `runPlanned` is set — prints `Generated test
+run:` and calls `runGeneratedTest`, exiting with the child's exit code. No run
+logic is duplicated; execution stays in `testRunnerAgent`, which still respects
+`execution-config.json`, `--env`, `--target`, and `--vars-file`.
+
+Validation / safety:
+- `--run` without `--write` → friendly error; `--run` with `--dry-run` → friendly
+  error (checked before generation).
+- Run happens **only after a successful write**: duplicate guard, overwrite
+  guard, non-Playwright, or any generation failure → no `runPlanned`, no run.
+- Runs **only the generated file** (never the suite). The child exit code is
+  preserved: generation ok + test fails → command exits non-zero; test passes →
+  exit 0. Review findings alone never fail the command.
+- No self-healing, no auto-fixes, no automatic AI. Existing `generate` behavior
+  without `--run` is unchanged.
+
+Tests: `tests/unit/generateRun.test.ts` mocks `testRunnerAgent` (no real
+Playwright/child process) and covers validation, run planning (incl.
+env/target/vars and local defaults), duplicate/overwrite skipping, delegation
+args, and exit-code passthrough.
 
 ---
 

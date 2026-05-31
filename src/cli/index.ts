@@ -22,7 +22,7 @@ import { runCapabilitiesAgent, buildCapabilitiesReport } from '../agents/capabil
 import { runCapabilityCheckAgent, buildCapabilityCheckReport } from '../agents/capabilityCheckAgent';
 import { runSpecNormalizerAgent, buildSpecNormalizerReport } from '../agents/specNormalizerAgent';
 import { runImportSpecAgent, buildImportSpecReport } from '../agents/importSpecAgent';
-import { runAutomationGenerator, buildAutomationGeneratorReport } from '../agents/automationGeneratorAgent';
+import { runAutomationGenerator, buildAutomationGeneratorReport, runGeneratedTest } from '../agents/automationGeneratorAgent';
 import { ReviewContext, runAiReview, runAiLayer, buildAiReviewReport } from '../agents/automationReviewerAgent';
 import { saveAiReviewReport } from '../core/reviewReportWriter';
 import { buildReviewHistoryReport } from '../core/reviewHistory';
@@ -60,6 +60,11 @@ if (command === 'analyze') {
     tcId = tcValue && !tcValue.startsWith('--') ? tcValue : '';
   }
 
+  // Run flags (only used with --run); reuse the same flags as the run command.
+  const genEnvIdx = args.indexOf('--env');
+  const genTargetIdx = args.indexOf('--target');
+  const genVarsIdx = args.indexOf('--vars-file');
+
   (async () => {
     const result = await runAutomationGenerator({
       targetRepo: targetPath,
@@ -71,12 +76,26 @@ if (command === 'analyze') {
       review: args.includes('--review'),
       ai: args.includes('--ai'),
       saveReview: args.includes('--save-review'),
+      run: args.includes('--run'),
+      selectedEnv: genEnvIdx !== -1 ? args[genEnvIdx + 1] : undefined,
+      selectedTarget: genTargetIdx !== -1 ? args[genTargetIdx + 1] : undefined,
+      varsFileArg: genVarsIdx !== -1 ? args[genVarsIdx + 1] : undefined,
     });
 
     const reportLines = buildAutomationGeneratorReport(result);
     if (reportLines.length > 0) console.log(reportLines.join('\n'));
     for (const errorLine of result.errors) console.error(errorLine);
     if (result.exitCode !== 0) process.exit(result.exitCode);
+
+    // Optionally run the generated test (after the generation/review report).
+    // The child process exit code is preserved as the command's exit code.
+    if (result.runPlanned) {
+      console.log('\nGenerated test run:\n');
+      const runResult = runGeneratedTest(result.runPlanned);
+      for (const message of runResult.messages) console.log(message);
+      for (const errorLine of runResult.errors) console.error(errorLine);
+      if (runResult.exitCode !== 0) process.exit(runResult.exitCode);
+    }
   })().catch(err => {
     console.error('generate failed unexpectedly:', (err as Error).message);
     process.exit(1);
