@@ -1,5 +1,6 @@
 import { WorkItemConnector, WorkItemProviderName } from './workItemConnector';
 import { createDisabledWorkItemConnector } from './disabledWorkItemConnector';
+import { createAzureDevOpsConnector } from './azureDevOpsConnector';
 
 /**
  * Resolves a provider name (case-insensitive) to a connector.
@@ -30,11 +31,12 @@ export function resolveWorkItemConnector(rawProvider: string | undefined): WorkI
     };
   }
 
-  // Step 60: all providers resolve to the disabled connector. The resolved
-  // provider name is preserved for reporting.
-  return {
-    ok: true,
-    provider: normalized as WorkItemProviderName,
-    connector: createDisabledWorkItemConnector(),
-  };
+  const provider = normalized as WorkItemProviderName;
+
+  // azure has a real adapter (Step 61). Other providers fall back to the
+  // disabled connector until their adapters are implemented.
+  const connector: WorkItemConnector =
+    provider === 'azure' ? createAzureDevOpsConnector() : createDisabledWorkItemConnector();
+
+  return { ok: true, provider, connector };
 }

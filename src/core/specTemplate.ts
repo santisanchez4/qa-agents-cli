@@ -5,7 +5,8 @@
 export type SpecTemplateInput = {
   id: string;            // e.g. TC-12345
   title: string;
-  sourceFile: string;    // input file path as provided (relative or absolute)
+  source?: string;       // e.g. local-file (default), azure-devops
+  sourceFile: string;    // input file path / external reference
   normalizedAt: string;  // ISO timestamp
   summary: string;
   steps: string[];
@@ -24,7 +25,7 @@ export function buildSpecMarkdown(input: SpecTemplateInput): string {
 
 ## Metadata
 
-- Source: local-file
+- Source: ${input.source ?? 'local-file'}
 - Source file: ${input.sourceFile}
 - Normalized at: ${input.normalizedAt}
 

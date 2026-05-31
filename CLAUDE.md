@@ -800,9 +800,10 @@ src/
     specTemplate.ts       - buildSpecMarkdown (standardized internal spec)
     specFileWriter.ts     - writeSpecFile (.qa-agents/specs/, refuses overwrite)
     providers/            - openAi, anthropic, gemini, deepSeek provider factories
-    connectors/           - generic work-item connector interface (Step 60):
+    connectors/           - work-item connectors:
                             workItemConnector (types/interface),
-                            disabledWorkItemConnector, workItemConnectorResolver
+                            disabledWorkItemConnector, workItemConnectorResolver,
+                            azureDevOpsConnector (Step 61, read-only)
 
   agents/
     automationReviewerAgent.ts  - runAiReview, runAiLayer, buildAiReviewReport
@@ -1792,6 +1793,62 @@ the existing Step 59 flow (`specTemplate.buildSpecMarkdown` +
 Safety: no Azure/Jira/Trello HTTP, no network, no AI, no Playwright, no env-var
 reads, and no secrets printed. Tests use temp dirs only and make no external
 calls.
+
+---
+
+## Step 61 — Azure DevOps Connector MVP (completed)
+
+Implemented the first real provider adapter behind the Step 60 connector
+interface: read-only Azure DevOps import.
+
+```bash
+npm run dev -- import-spec <target-repo> --provider azure --id <work-item-id>
+```
+
+Files:
+- `src/core/connectors/azureDevOpsConnector.ts` — `createAzureDevOpsConnector`,
+  plus pure helpers `mapAzureWorkItem` and `parseAzureSteps`.
+- Updated: `workItemConnectorResolver.ts` (azure → real connector; jira/trello →
+  disabled), `importSpecAgent.ts` (routes a payload into the Step 59 spec flow),
+  `specTemplate.ts` (optional `source`, default `local-file`), `help.ts`.
+- Tests: `tests/unit/azureDevOpsConnector.test.ts`,
+  `tests/unit/importSpecAgentAzure.test.ts` (mocked `fetch`, temp dirs).
+
+Required env vars (read at call time; values never printed):
+```txt
+AZURE_DEVOPS_ORG_URL    e.g. https://dev.azure.com/my-org
+AZURE_DEVOPS_PROJECT    e.g. my-project
+AZURE_DEVOPS_PAT        personal access token (secret)
+```
+
+Connector behavior:
+- `name: 'azure'`; `isConfigured()` true only when all three env vars are set.
+- Missing config → `{ ok:false, reason:'not_configured', error:'…Required env
+  vars: AZURE_DEVOPS_ORG_URL, AZURE_DEVOPS_PROJECT, AZURE_DEVOPS_PAT.' }`.
+- `GET {ORG_URL}/{PROJECT}/_apis/wit/workitems/{id}?api-version=7.1` using PAT via
+  Basic auth (`Authorization: Basic base64(":"+PAT)`). Read-only — no Azure writes.
+- HTTP mapping: 404 → `not_found`; 401/403 → `not_configured`; other non-2xx /
+  non-JSON / unrecognized body → `invalid_response`.
+- Field mapping: `System.Id`→externalId, `System.Title`→title,
+  `System.Description`→description, `Microsoft.VSTS.Common.AcceptanceCriteria`→
+  acceptanceCriteria, `Microsoft.VSTS.TCM.Steps`→steps (best-effort), full JSON
+  kept in `payload.raw`.
+
+Agent behavior (success): `normalizeId(externalId)` → `TC-<id>`, build spec via
+the existing template, write to `<target-repo>/.qa-agents/specs/TC-<id>.md`
+(refuses overwrite), and print the `Normalized spec created:` report with a
+`generate … --dry-run` next step.
+
+Safety: read-only Azure import only (no updates/write-back); no AI, no Playwright;
+PAT and other secrets are never printed (and are redacted from any dynamic error
+text); the full work item is stored in `payload.raw` but never echoed. Only the
+`azure` adapter exists — jira/trello remain disabled.
+
+Azure step parser limitations (best-effort, no XML library): it regex-matches
+`<step>`/`<parameterizedString>` and treats the first two cells as
+action/expected result; deeply nested formatting, attachments, shared steps,
+and parameter data tables are not interpreted; unrecognized content is preserved
+as a single best-effort action / in `rawText` rather than failing.
 
 ---
 

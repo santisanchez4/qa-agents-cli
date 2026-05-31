@@ -55,7 +55,8 @@ describe('runImportSpecAgent validation', () => {
 });
 
 describe('runImportSpecAgent not-implemented behavior', () => {
-  for (const provider of ['azure', 'jira', 'trello']) {
+  // azure has a real adapter (Step 61); only jira/trello remain disabled.
+  for (const provider of ['jira', 'trello']) {
     it(`reports not implemented for ${provider}`, async () => {
       const result = await runImportSpecAgent({ targetRepo: repo, provider, externalId: '253628' });
 

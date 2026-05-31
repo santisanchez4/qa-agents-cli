@@ -4,12 +4,19 @@ import { createDisabledWorkItemConnector } from '../../src/core/connectors/disab
 
 describe('resolveWorkItemConnector', () => {
   it('recognizes azure/jira/trello/disabled case-insensitively', () => {
-    for (const raw of ['azure', 'AZURE', 'Jira', '  trello  ', 'Disabled']) {
+    const cases: Array<[string, string]> = [
+      ['azure', 'azure'],
+      ['AZURE', 'azure'],   // azure has a real adapter (Step 61)
+      ['Jira', 'disabled'],
+      ['  trello  ', 'disabled'],
+      ['Disabled', 'disabled'],
+    ];
+    for (const [raw, expectedConnectorName] of cases) {
       const result = resolveWorkItemConnector(raw);
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(SUPPORTED_PROVIDERS).toContain(result.provider);
-        expect(result.connector.name).toBe('disabled'); // Step 60: all disabled
+        expect(result.connector.name).toBe(expectedConnectorName);
       }
     }
   });

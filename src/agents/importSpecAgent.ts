@@ -1,21 +1,20 @@
 import fs from 'fs';
-import { WorkItemProviderName } from '../core/connectors/workItemConnector';
+import { WorkItemPayload, WorkItemProviderName } from '../core/connectors/workItemConnector';
 import { resolveWorkItemConnector } from '../core/connectors/workItemConnectorResolver';
+import { normalizeId } from '../core/specNormalizer';
+import { buildSpecMarkdown } from '../core/specTemplate';
+import { writeSpecFile } from '../core/specFileWriter';
 
 /**
  * Use-case orchestration for the `import-spec` command.
  *
- * Step 60 wires the generic work-item connector interface end-to-end without any
- * real provider logic: it validates args, resolves a connector, and reports the
- * result. Every provider currently resolves to the disabled connector, so the
- * agent reports "not implemented yet".
+ * Resolves a generic work-item connector and, when a real provider (Step 61:
+ * azure) returns a payload, routes it into the existing Step 59 spec flow
+ * (specTemplate.buildSpecMarkdown + specFileWriter.writeSpecFile, with
+ * specNormalizer.normalizeId) to produce <target-repo>/.qa-agents/specs/TC-<id>.md.
  *
- * Extension point for Step 61: when a real connector returns `response.ok` with a
- * `payload`, convert that WorkItemPayload into a standardized spec using the
- * existing Step 59 flow (`core/specTemplate.buildSpecMarkdown` +
- * `core/specFileWriter.writeSpecFile`, with `core/specNormalizer.normalizeId`)
- * and produce <target-repo>/.qa-agents/specs/TC-<id>.md. See the `response.ok`
- * branch below.
+ * No provider HTTP/credentials logic lives here — that is inside each connector.
+ * Read-only with respect to the provider; never prints secrets.
  */
 
 export type ImportSpecOptions = {
@@ -32,11 +31,50 @@ export type ImportSpecResult = {
   externalId?: string;
   status?: string;
   message?: string;
+  title?: string;
+  normalizedId?: string;
   outputPath?: string;
+  targetRepo?: string;
 };
 
 function fail(errors: string[]): ImportSpecResult {
   return { ok: false, exitCode: 1, errors };
+}
+
+function firstNonEmptyLine(text: string): string | undefined {
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+// Converts a generic WorkItemPayload into normalized spec markdown using the
+// existing Step 59 template (no normalizer duplication).
+function buildSpecFromPayload(payload: WorkItemPayload, normalizedId: string): string {
+  const stepStrings = (payload.steps ?? [])
+    .map(step => step.action)
+    .filter(action => action.length > 0);
+
+  const expectedFromSteps = (payload.steps ?? [])
+    .map(step => step.expectedResult)
+    .filter((result): result is string => Boolean(result && result.length > 0));
+  const expectedResults = [...expectedFromSteps, ...(payload.acceptanceCriteria ?? [])];
+
+  const baseText = payload.description ?? payload.rawText ?? '';
+  const summary = firstNonEmptyLine(baseText) ?? 'TBD';
+
+  return buildSpecMarkdown({
+    id: normalizedId,
+    title: payload.title,
+    source: payload.provider,
+    sourceFile: `work-item/${payload.externalId}`,
+    normalizedAt: new Date().toISOString(),
+    summary,
+    steps: stepStrings,
+    expectedResults,
+    rawInput: payload.rawText ?? payload.description ?? '(no raw text captured)',
+  });
 }
 
 export async function runImportSpecAgent(options: ImportSpecOptions): Promise<ImportSpecResult> {
@@ -71,21 +109,31 @@ export async function runImportSpecAgent(options: ImportSpecOptions): Promise<Im
   });
 
   if (response.ok && response.payload) {
-    // Step 61 anchor: convert response.payload into a normalized spec and write
-    // it via the Step 59 spec flow. Unreachable in Step 60 (always disabled).
+    const payload = response.payload;
+    const normalizedId = normalizeId(payload.externalId) ?? `TC-${payload.externalId}`;
+    const markdown = buildSpecFromPayload(payload, normalizedId);
+
+    const write = writeSpecFile(targetRepo, `${normalizedId}.md`, markdown);
+    if (write.alreadyExists) {
+      return fail([`Normalized spec already exists. Refusing to overwrite:\n${write.outputPath}`]);
+    }
+
     return {
       ok: true,
       exitCode: 0,
       errors: [],
       provider: resolution.provider,
-      externalId,
-      status: 'Imported.',
-      message: 'Work item imported. (Spec generation is added in a later step.)',
+      externalId: payload.externalId,
+      title: payload.title,
+      normalizedId,
+      outputPath: write.outputPath,
+      targetRepo,
+      status: 'Normalized spec created.',
     };
   }
 
-  // Recognized provider, but the connector is disabled / not implemented yet.
-  if (response.reason === 'not_implemented' || response.reason === 'not_configured') {
+  // Recognized provider whose adapter is not implemented yet (e.g. jira/trello).
+  if (response.reason === 'not_implemented') {
     return {
       ok: true,
       exitCode: 0,
@@ -97,36 +145,55 @@ export async function runImportSpecAgent(options: ImportSpecOptions): Promise<Im
     };
   }
 
-  // Future real-connector failures (not_found / invalid_response).
-  return {
-    ok: false,
-    exitCode: 1,
-    errors: [response.error ?? 'Work item import failed.'],
-    provider: resolution.provider,
-    externalId,
-  };
+  // Real-connector failures (not_configured / not_found / invalid_response).
+  return fail([response.error ?? 'Work item import failed.']);
 }
 
 export function buildImportSpecReport(result: ImportSpecResult): string[] {
-  // Validation failures carry no provider/status -> the CLI prints errors only.
-  if (!result.provider || result.status === undefined) return [];
+  // Success: a spec file was created.
+  if (result.outputPath && result.normalizedId) {
+    return [
+      'QA Agents - Import Spec',
+      '',
+      'Provider:',
+      result.provider ?? '',
+      '',
+      'External ID:',
+      result.externalId ?? '',
+      '',
+      'Normalized spec created:',
+      result.outputPath,
+      '',
+      'Title:',
+      result.title ?? '',
+      '',
+      'Next step:',
+      `npm run dev -- generate ${result.targetRepo ?? ''} --spec .qa-agents/specs/${result.normalizedId}.md --dry-run`,
+    ];
+  }
 
-  return [
-    'QA Agents - Import Spec',
-    '',
-    'Provider:',
-    result.provider,
-    '',
-    'External ID:',
-    result.externalId ?? '',
-    '',
-    'Status:',
-    result.status,
-    '',
-    'Message:',
-    result.message ?? '',
-    '',
-    'Next step:',
-    'Implement the provider adapter, then route its WorkItemPayload into the existing spec normalizer.',
-  ];
+  // Informative status (e.g. not implemented yet).
+  if (result.provider && result.status !== undefined) {
+    return [
+      'QA Agents - Import Spec',
+      '',
+      'Provider:',
+      result.provider,
+      '',
+      'External ID:',
+      result.externalId ?? '',
+      '',
+      'Status:',
+      result.status,
+      '',
+      'Message:',
+      result.message ?? '',
+      '',
+      'Next step:',
+      'Implement the provider adapter, then route its WorkItemPayload into the existing spec normalizer.',
+    ];
+  }
+
+  // Validation/connector failure -> the CLI prints errors only.
+  return [];
 }
