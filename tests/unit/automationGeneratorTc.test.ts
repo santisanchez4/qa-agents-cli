@@ -36,9 +36,9 @@ function writeSpec(normalizedId: string): void {
 }
 
 describe('generate --tc resolution', () => {
-  it('resolves --tc 253628 to .qa-agents/specs/TC-253628.md (dry-run)', () => {
+  it('resolves --tc 253628 to .qa-agents/specs/TC-253628.md (dry-run)', async () => {
     writeSpec('TC-253628');
-    const result = runAutomationGenerator({ targetRepo: repo, tcId: '253628', dryRun: true, write: false, force: false });
+    const result = await runAutomationGenerator({ targetRepo: repo, tcId: '253628', dryRun: true, write: false, force: false });
 
     expect(result.ok).toBe(true);
     expect(result.resolvedTcSpec).toBe('.qa-agents/specs/TC-253628.md');
@@ -49,22 +49,22 @@ describe('generate --tc resolution', () => {
     expect(report).toContain('.qa-agents/specs/TC-253628.md');
   });
 
-  it('resolves --tc TC-253628 correctly', () => {
+  it('resolves --tc TC-253628 correctly', async () => {
     writeSpec('TC-253628');
-    const result = runAutomationGenerator({ targetRepo: repo, tcId: 'TC-253628', dryRun: true, write: false, force: false });
+    const result = await runAutomationGenerator({ targetRepo: repo, tcId: 'TC-253628', dryRun: true, write: false, force: false });
     expect(result.ok).toBe(true);
     expect(result.resolvedTcSpec).toBe('.qa-agents/specs/TC-253628.md');
   });
 
-  it('resolves --tc tc_253628 correctly', () => {
+  it('resolves --tc tc_253628 correctly', async () => {
     writeSpec('TC-253628');
-    const result = runAutomationGenerator({ targetRepo: repo, tcId: 'tc_253628', dryRun: true, write: false, force: false });
+    const result = await runAutomationGenerator({ targetRepo: repo, tcId: 'tc_253628', dryRun: true, write: false, force: false });
     expect(result.ok).toBe(true);
     expect(result.resolvedTcSpec).toBe('.qa-agents/specs/TC-253628.md');
   });
 
-  it('returns a friendly error when the resolved spec does not exist', () => {
-    const result = runAutomationGenerator({ targetRepo: repo, tcId: '999999', dryRun: true, write: false, force: false });
+  it('returns a friendly error when the resolved spec does not exist', async () => {
+    const result = await runAutomationGenerator({ targetRepo: repo, tcId: '999999', dryRun: true, write: false, force: false });
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(1);
     const msg = result.errors.join('\n');
@@ -73,15 +73,15 @@ describe('generate --tc resolution', () => {
     expect(msg).toContain('normalize-spec');
   });
 
-  it('returns a friendly error for an invalid TC id', () => {
-    const result = runAutomationGenerator({ targetRepo: repo, tcId: 'not-an-id', dryRun: true, write: false, force: false });
+  it('returns a friendly error for an invalid TC id', async () => {
+    const result = await runAutomationGenerator({ targetRepo: repo, tcId: 'not-an-id', dryRun: true, write: false, force: false });
     expect(result.ok).toBe(false);
     expect(result.errors.join('\n')).toContain('Invalid --tc id');
   });
 
-  it('returns a friendly error when --spec and --tc are both provided', () => {
+  it('returns a friendly error when --spec and --tc are both provided', async () => {
     writeSpec('TC-253628');
-    const result = runAutomationGenerator({
+    const result = await runAutomationGenerator({
       targetRepo: repo,
       specArg: '.qa-agents/specs/TC-253628.md',
       tcId: '253628',
@@ -91,15 +91,15 @@ describe('generate --tc resolution', () => {
     expect(result.errors.join('\n')).toContain('Both --spec and --tc were provided');
   });
 
-  it('returns a friendly error when --tc has no value', () => {
-    const result = runAutomationGenerator({ targetRepo: repo, tcId: '', dryRun: true, write: false, force: false });
+  it('returns a friendly error when --tc has no value', async () => {
+    const result = await runAutomationGenerator({ targetRepo: repo, tcId: '', dryRun: true, write: false, force: false });
     expect(result.ok).toBe(false);
     expect(result.errors.join('\n')).toContain('Missing value for --tc');
   });
 
-  it('works with --write using --tc', () => {
+  it('works with --write using --tc', async () => {
     writeSpec('TC-253628');
-    const result = runAutomationGenerator({ targetRepo: repo, tcId: '253628', dryRun: false, write: true, force: false });
+    const result = await runAutomationGenerator({ targetRepo: repo, tcId: '253628', dryRun: false, write: true, force: false });
 
     expect(result.ok).toBe(true);
     expect(result.resolvedTcSpec).toBe('.qa-agents/specs/TC-253628.md');
@@ -109,9 +109,9 @@ describe('generate --tc resolution', () => {
 });
 
 describe('generate --spec still works (regression)', () => {
-  it('loads a spec via --spec and produces a draft (dry-run)', () => {
+  it('loads a spec via --spec and produces a draft (dry-run)', async () => {
     writeSpec('TC-100');
-    const result = runAutomationGenerator({
+    const result = await runAutomationGenerator({
       targetRepo: repo,
       specArg: '.qa-agents/specs/TC-100.md',
       dryRun: true, write: false, force: false,
@@ -121,8 +121,8 @@ describe('generate --spec still works (regression)', () => {
     expect(result.draft).toBeTruthy();
   });
 
-  it('reports missing --spec/--tc when neither is provided', () => {
-    const result = runAutomationGenerator({ targetRepo: repo, dryRun: true, write: false, force: false });
+  it('reports missing --spec/--tc when neither is provided', async () => {
+    const result = await runAutomationGenerator({ targetRepo: repo, dryRun: true, write: false, force: false });
     expect(result.ok).toBe(false);
     expect(result.errors.join('\n')).toContain('Missing --spec or --tc argument.');
   });

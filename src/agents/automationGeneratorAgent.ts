@@ -8,6 +8,14 @@ import {
 } from '../core/testGeneration';
 import { detectRelatedTests } from '../core/duplicateDetection';
 import { normalizeId } from '../core/specNormalizer';
+import { readLatestRunResultSafe } from '../core/runResults';
+import { saveAiReviewReport } from '../core/reviewReportWriter';
+import {
+  ReviewContext,
+  runAiReview,
+  runAiLayer,
+  buildAiReviewReport,
+} from './automationReviewerAgent';
 
 /**
  * Use-case orchestration for the `generate` command.
@@ -28,6 +36,12 @@ export type AutomationGeneratorOptions = {
   dryRun: boolean;
   write: boolean;
   force: boolean;
+  /** Run the deterministic reviewer on the generated test after generation. */
+  review?: boolean;
+  /** Only with review: enable the optional AI layer (skipped if no provider). */
+  ai?: boolean;
+  /** Only with review: persist the review report via the review report writer. */
+  saveReview?: boolean;
 };
 
 export type AutomationGeneratorWriteSuccess = {
@@ -51,6 +65,12 @@ export type AutomationGeneratorResult = {
   writeSuccess: AutomationGeneratorWriteSuccess | null;
   /** Relative spec path resolved from --tc (null when --tc was not used). */
   resolvedTcSpec: string | null;
+  /** Review report lines (when --review ran). */
+  reviewReport?: string[];
+  /** Path of the saved review report (when --review --save-review). */
+  reviewSavedPath?: string;
+  /** Why review was requested but not run (e.g. non-Playwright generation). */
+  reviewSkippedReason?: string;
 };
 
 function readFileIfExists(filePath: string): string | null {
@@ -78,13 +98,23 @@ function emptyResult(mode: AutomationGeneratorMode): AutomationGeneratorResult {
   };
 }
 
-export function runAutomationGenerator(
+export async function runAutomationGenerator(
   options: AutomationGeneratorOptions
-): AutomationGeneratorResult {
+): Promise<AutomationGeneratorResult> {
   const { targetRepo, specArg, tcId, dryRun, write, force } = options;
   const mode: AutomationGeneratorMode = dryRun ? 'dry-run' : write ? 'write' : 'plan';
 
   const result = emptyResult(mode);
+
+  // Review flag dependencies (AI must never be the default).
+  if (options.ai && !options.review) {
+    result.errors.push('The --ai flag requires --review.');
+    return result;
+  }
+  if (options.saveReview && !options.review) {
+    result.errors.push('The --save-review flag requires --review.');
+    return result;
+  }
 
   // Resolve --tc into a normalized spec path (mutually exclusive with --spec).
   // This only reads an already-normalized local spec; it never creates one.
@@ -163,19 +193,19 @@ export function runAutomationGenerator(
     ? detectRelatedTests(targetRepo, suggestedFilePath, targetFolder, e2eBase, testsDir, specTitle, specRaw!)
     : [];
 
+  const isPlaywright = (profile.detectedFrameworks ?? []).includes('Playwright');
+
   if (dryRun) {
     result.relatedTests = relatedTests;
 
     const draft = buildDeterministicTestDraft(profile, specTitle, suggestedFilePath, patterns);
-    if (draft) {
-      result.draft = draft;
-    } else {
+    if (!draft) {
       result.errors.push('Dry-run requested, but no draft could be generated.');
+      return result;
     }
-    return result;
-  }
-
-  if (write) {
+    result.draft = draft;
+    // Fall through to the optional review step (in-memory; no file written).
+  } else if (write) {
     const frameworks = profile.detectedFrameworks ?? [];
     if (!frameworks.includes('Playwright')) {
       result.errors.push('Write mode currently supports Playwright only.');
@@ -186,7 +216,7 @@ export function runAutomationGenerator(
     const absoluteFilePath = path.resolve(targetRepo, suggestedFilePath);
     const code = buildTestCode(specTitle, suggestedFilePath, patterns);
 
-    // 1. Related-test guard — must run before any filesystem writes
+    // 1. Related-test guard — must run before any filesystem writes (no review).
     if (relatedTests.length > 0 && !force) {
       result.errors.push([
         'Related existing test files found. Refusing to auto-create a possible duplicate.',
@@ -205,7 +235,7 @@ export function runAutomationGenerator(
       result.forceNotice = true;
     }
 
-    // 2. Overwrite guard
+    // 2. Overwrite guard (no review when the write is refused).
     if (fs.existsSync(absoluteFilePath)) {
       result.errors.push(`Target test file already exists. Refusing to overwrite:\n${absoluteFilePath}`);
       result.exitCode = 1;
@@ -222,11 +252,74 @@ export function runAutomationGenerator(
       testCommand: profile.testCommand ?? 'npx playwright test',
       suggestedFilePath,
     };
-    return result;
+    // Fall through to the optional review step (reviews the written file).
   }
 
-  // Plan-only mode
+  // ── Optional review of the generated test (only after successful generation) ──
+  if (options.review) {
+    if (!isPlaywright) {
+      result.reviewSkippedReason = 'Review supports Playwright-generated tests only.';
+    } else {
+      const fileContent = result.writeSuccess
+        ? readFileIfExists(result.writeSuccess.filePath) ?? ''
+        : buildTestCode(specTitle, suggestedFilePath, patterns);
+
+      await runGeneratedReview({
+        targetRepo,
+        profile,
+        repoRules: rulesRawResolved,
+        relativeFilePath: suggestedFilePath,
+        fileContent,
+        ai: options.ai === true,
+        saveReview: options.saveReview === true,
+        result,
+      });
+    }
+  }
+
   return result;
+}
+
+type GeneratedReviewInput = {
+  targetRepo: string;
+  profile: ProjectScanResult;
+  repoRules: string | null;
+  relativeFilePath: string;
+  fileContent: string;
+  ai: boolean;
+  saveReview: boolean;
+  result: AutomationGeneratorResult;
+};
+
+// Reviews generated test content in memory using the existing deterministic
+// reviewer (and optional AI layer). Reuses the review rules — no duplication.
+async function runGeneratedReview(input: GeneratedReviewInput): Promise<void> {
+  const { targetRepo, profile, repoRules, relativeFilePath, fileContent, ai, saveReview, result } = input;
+
+  const executionConfig = readFileIfExists(path.join(targetRepo, '.qa-agents', 'execution-config.json'));
+  const latestRunRead = readLatestRunResultSafe(targetRepo);
+  const latestRun = latestRunRead.ok ? latestRunRead.data! : null;
+
+  const context: ReviewContext = {
+    targetRepo,
+    relativeFilePath: relativeFilePath.replace(/\\/g, '/'),
+    fileContent,
+    framework: (profile.detectedFrameworks ?? []).join(', ') || '(none detected)',
+    testCommand: profile.testCommand ?? '(none)',
+    repoRules,
+    executionConfig,
+    latestRun,
+    aiEnabled: ai,
+  };
+
+  const reviewResult = runAiReview(context);
+  const aiLayer = await runAiLayer(context, reviewResult);
+  result.reviewReport = buildAiReviewReport(context, reviewResult, aiLayer);
+
+  if (saveReview) {
+    const saved = saveAiReviewReport(targetRepo, result.reviewReport);
+    result.reviewSavedPath = saved.latestPath;
+  }
 }
 
 /**
@@ -279,6 +372,16 @@ export function buildAutomationGeneratorReport(result: AutomationGeneratorResult
       `  cd ${targetRepo}`,
       `  ${testCommand} -- ${suggestedFilePath}`,
     );
+  }
+
+  // Optional review section (only present when --review ran).
+  if (result.reviewSkippedReason) {
+    lines.push('', 'Generated test review:', '', `Review skipped: ${result.reviewSkippedReason}`);
+  } else if (result.reviewReport && result.reviewReport.length > 0) {
+    lines.push('', 'Generated test review:', '', ...result.reviewReport);
+    if (result.reviewSavedPath) {
+      lines.push('', 'Review report saved:', result.reviewSavedPath);
+    }
   }
 
   return lines;

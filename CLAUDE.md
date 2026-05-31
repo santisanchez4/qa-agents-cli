@@ -267,6 +267,7 @@ generate [path] --spec <file> --dry-run
 generate [path] --spec <file> --write
 generate [path] --spec <file> --write --force
 generate [path] --tc <id> [--dry-run | --write [--force]]
+generate [path] (--spec <file> | --tc <id>) [--dry-run | --write] --review [--ai] [--save-review]
 inspect [path]
 init-config [path]
 init-rules [path]
@@ -1891,6 +1892,55 @@ This step is local/read-only: it only reads an already-normalized spec — no
 Azure/Jira/Trello, network, AI, or Playwright. Existing `generate --spec`
 behavior (plan / --dry-run / --write / --write --force, and the dry-run+write
 conflict notice) is unchanged. Tests: `tests/unit/automationGeneratorTc.test.ts`.
+
+---
+
+## Step 63 — Review generated test (completed)
+
+`generate` can now review its output via the existing deterministic reviewer.
+Optional flags (work with `--spec` or `--tc`, and `--dry-run` or `--write`):
+
+```bash
+npm run dev -- generate <repo> --tc 253628 --dry-run --review
+npm run dev -- generate <repo> --tc 253628 --write --review
+npm run dev -- generate <repo> --tc 253628 --write --review --ai
+npm run dev -- generate <repo> --spec .qa-agents/specs/TC-253628.md --write --review --save-review
+```
+
+Flags (`AutomationGeneratorOptions`): `review?`, `ai?`, `saveReview?`. Result:
+`reviewReport?`, `reviewSavedPath?`, `reviewSkippedReason?`.
+
+Behavior:
+- `--review` runs the deterministic reviewer (`runAiReview`) on the generated
+  test. The review report is appended under `Generated test review:`.
+- `--dry-run --review` reviews the generated draft **in memory** (the reviewer is
+  already content-based via `ReviewContext.fileContent`) — no temp file, no
+  target-repo writes.
+- `--write --review` reviews the **written** file after a successful write.
+- `--ai` (only with `--review`) enables the optional AI layer (`runAiLayer`). If
+  no provider is configured, deterministic review still runs and AI is skipped —
+  same behavior as `ai-review`. **AI is never the default.**
+- `--save-review` (only with `--review`) persists the report via the existing
+  `saveAiReviewReport` under `.qa-agents/reviews/`.
+
+Reuses `automationReviewerAgent` (runAiReview/runAiLayer/buildAiReviewReport),
+`reviewRules`, `reviewReportWriter`, `aiProviderResolver`,
+`reviewerPromptBuilder` — no deterministic-review duplication. The generator is
+now async (`runAutomationGenerator` returns a Promise); the CLI awaits it.
+
+Safety:
+- No self-healing, patching, or auto-fixes; review is read-only and never edits
+  the generated test.
+- Review runs **only after successful generation**: if the duplicate guard or the
+  overwrite guard blocks the write, or generation fails, review does not run.
+- Non-Playwright generation → review is skipped with a reason (no crash).
+- `--ai` without `--review` → friendly error; `--save-review` without `--review`
+  → friendly error.
+- Existing generate behavior without `--review` is unchanged.
+
+Tests: `tests/unit/generateReview.test.ts` (temp dirs; AI provider env cleared so
+no real provider is called). Step 62 generator tests updated to `await` the now
+-async function.
 
 ---
 

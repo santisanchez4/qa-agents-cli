@@ -60,19 +60,27 @@ if (command === 'analyze') {
     tcId = tcValue && !tcValue.startsWith('--') ? tcValue : '';
   }
 
-  const result = runAutomationGenerator({
-    targetRepo: targetPath,
-    specArg,
-    tcId,
-    dryRun: isDryRun,
-    write: args.includes('--write'),
-    force: args.includes('--force'),
-  });
+  (async () => {
+    const result = await runAutomationGenerator({
+      targetRepo: targetPath,
+      specArg,
+      tcId,
+      dryRun: isDryRun,
+      write: args.includes('--write'),
+      force: args.includes('--force'),
+      review: args.includes('--review'),
+      ai: args.includes('--ai'),
+      saveReview: args.includes('--save-review'),
+    });
 
-  const reportLines = buildAutomationGeneratorReport(result);
-  if (reportLines.length > 0) console.log(reportLines.join('\n'));
-  for (const errorLine of result.errors) console.error(errorLine);
-  if (result.exitCode !== 0) process.exit(result.exitCode);
+    const reportLines = buildAutomationGeneratorReport(result);
+    if (reportLines.length > 0) console.log(reportLines.join('\n'));
+    for (const errorLine of result.errors) console.error(errorLine);
+    if (result.exitCode !== 0) process.exit(result.exitCode);
+  })().catch(err => {
+    console.error('generate failed unexpectedly:', (err as Error).message);
+    process.exit(1);
+  });
 } else if (command === 'run') {
   const fileFlagIndex = args.indexOf('--file');
   const relativeTestFile = fileFlagIndex !== -1 ? args[fileFlagIndex + 1] : undefined;
