@@ -21,6 +21,7 @@ import { runDoctorAgent, buildDoctorReport } from '../agents/doctorAgent';
 import { runCapabilitiesAgent, buildCapabilitiesReport } from '../agents/capabilitiesAgent';
 import { runCapabilityCheckAgent, buildCapabilityCheckReport } from '../agents/capabilityCheckAgent';
 import { runSpecNormalizerAgent, buildSpecNormalizerReport } from '../agents/specNormalizerAgent';
+import { runImportSpecAgent, buildImportSpecReport } from '../agents/importSpecAgent';
 import { runAutomationGenerator, buildAutomationGeneratorReport } from '../agents/automationGeneratorAgent';
 import { ReviewContext, runAiReview, runAiLayer, buildAiReviewReport } from '../agents/automationReviewerAgent';
 import { saveAiReviewReport } from '../core/reviewReportWriter';
@@ -200,6 +201,28 @@ if (command === 'analyze') {
     if (result.exitCode !== 0) process.exit(result.exitCode);
   })().catch(err => {
     console.error('normalize-spec failed unexpectedly:', (err as Error).message);
+    process.exit(1);
+  });
+} else if (command === 'import-spec') {
+  const providerFlagIndex = args.indexOf('--provider');
+  const provider = providerFlagIndex !== -1 ? args[providerFlagIndex + 1] : undefined;
+  const idFlagIndex = args.indexOf('--id');
+  const externalId = idFlagIndex !== -1 ? args[idFlagIndex + 1] : undefined;
+  const repoProvided = args[1] !== undefined && !args[1].startsWith('--');
+
+  (async () => {
+    const result = await runImportSpecAgent({
+      targetRepo: repoProvided ? targetPath : '',
+      provider,
+      externalId,
+    });
+
+    const reportLines = buildImportSpecReport(result);
+    if (reportLines.length > 0) console.log('\n' + reportLines.join('\n'));
+    for (const errorLine of result.errors) console.error(errorLine);
+    if (result.exitCode !== 0) process.exit(result.exitCode);
+  })().catch(err => {
+    console.error('import-spec failed unexpectedly:', (err as Error).message);
     process.exit(1);
   });
 } else if (command === 'ai-review') {

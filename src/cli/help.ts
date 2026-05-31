@@ -25,5 +25,6 @@ Available commands:
   capabilities [path]           Detect existing QA/automation capabilities in a target repo
   capability-check [path] [--script <script>]  Evaluate repo-native QA automation capabilities
   normalize-spec [path] --input <file> --id <id>  Normalize a local spec file into .qa-agents/specs/TC-<id>.md
+  import-spec [path] --provider <provider> --id <external-id>  Import an external work item (connector interface; providers not implemented yet)
 `);
 }

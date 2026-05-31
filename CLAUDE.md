@@ -283,6 +283,7 @@ doctor [path]
 capabilities [path]
 capability-check [path] [--script <script>]
 normalize-spec [path] --input <file> --id <id>
+import-spec [path] --provider <provider> --id <external-id>
 ```
 
 ---
@@ -799,6 +800,9 @@ src/
     specTemplate.ts       - buildSpecMarkdown (standardized internal spec)
     specFileWriter.ts     - writeSpecFile (.qa-agents/specs/, refuses overwrite)
     providers/            - openAi, anthropic, gemini, deepSeek provider factories
+    connectors/           - generic work-item connector interface (Step 60):
+                            workItemConnector (types/interface),
+                            disabledWorkItemConnector, workItemConnectorResolver
 
   agents/
     automationReviewerAgent.ts  - runAiReview, runAiLayer, buildAiReviewReport
@@ -816,6 +820,7 @@ src/
     capabilitiesAgent.ts        - runCapabilitiesAgent, buildCapabilitiesReport
     capabilityCheckAgent.ts     - runCapabilityCheckAgent, buildCapabilityCheckReport
     specNormalizerAgent.ts      - runSpecNormalizerAgent, buildSpecNormalizerReport
+    importSpecAgent.ts          - runImportSpecAgent, buildImportSpecReport
 ```
 
 All command flows now live in the agent layer (`automationGeneratorAgent.ts`, `failureAnalyzerAgent.ts`, `reportAgent.ts`, `testRunnerAgent.ts`, `repoAnalystAgent.ts`, `executionConfigAgent.ts`, `suiteInspectorAgent.ts`, `repoRulesAgent.ts`, plus the AI `automationReviewerAgent.ts`). `src/cli/index.ts` is now argument parsing + agent dispatch only.
@@ -1746,6 +1751,47 @@ Safety: local-only and deterministic — no AI, no network, no Playwright, no
 external connectors (Azure/Jira/Trello are out of scope for this step). It does
 not modify the input or any other repo files beyond writing the new spec, and
 tests use temp dirs only.
+
+---
+
+## Step 60 — Generic Work Item Connector Interface (completed)
+
+Added the architecture (interface only — **no real network/API logic**) for
+importing external work items from providers like Azure DevOps, Jira, or Trello:
+
+```bash
+npm run dev -- import-spec <target-repo> --provider <provider> --id <external-id>
+```
+
+Files added:
+- `src/core/connectors/workItemConnector.ts` — provider-agnostic types and the
+  `WorkItemConnector` interface (`WorkItemProviderName`, `WorkItemStep`,
+  `WorkItemPayload`, `WorkItemImportRequest`, `WorkItemImportResponse`).
+- `src/core/connectors/disabledWorkItemConnector.ts` —
+  `createDisabledWorkItemConnector()`: `isConfigured()` false; `importWorkItem()`
+  returns `{ ok: false, reason: 'not_implemented', error: '…not implemented…' }`.
+- `src/core/connectors/workItemConnectorResolver.ts` — `resolveWorkItemConnector`
+  (case-insensitive; supported: `azure`, `jira`, `trello`, `disabled`). Step 60:
+  every supported provider resolves to the disabled connector while preserving
+  the requested provider name; unsupported → friendly error. No env vars read.
+- `src/agents/importSpecAgent.ts` — `runImportSpecAgent` (async),
+  `buildImportSpecReport`.
+- Tests: `tests/unit/workItemConnector.test.ts`, `tests/unit/importSpecAgent.test.ts`.
+
+Behavior (Step 60): all providers report `Status: Not implemented yet.` (exit 0,
+no spec file written). Validation errors exit non-zero: missing target repo /
+`--provider` / `--id`, unsupported provider, target repo path missing.
+
+Extension point for Step 61: `runImportSpecAgent` already calls the connector via
+the interface; when a real connector returns `response.ok` with a `payload`, the
+documented `response.ok` branch converts that `WorkItemPayload` into a spec using
+the existing Step 59 flow (`specTemplate.buildSpecMarkdown` +
+`specFileWriter.writeSpecFile`, `specNormalizer.normalizeId`) to produce
+`<target-repo>/.qa-agents/specs/TC-<id>.md` — without duplicating the normalizer.
+
+Safety: no Azure/Jira/Trello HTTP, no network, no AI, no Playwright, no env-var
+reads, and no secrets printed. Tests use temp dirs only and make no external
+calls.
 
 ---
 
